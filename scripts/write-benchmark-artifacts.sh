@@ -10,6 +10,7 @@ cold_seconds=""
 warm1_seconds=""
 cache_storage_bytes="0"
 cache_storage_source=""
+cache_storage_note=""
 bytes_uploaded=""
 bytes_downloaded=""
 hit_behavior_note=""
@@ -57,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --cache-storage-source)
       cache_storage_source="$2"
+      shift 2
+      ;;
+    --cache-storage-note)
+      cache_storage_note="$2"
       shift 2
       ;;
     --bytes-uploaded)
@@ -306,7 +311,8 @@ cat > "$json_path" <<JSON
   "cache": {
     "storage_bytes": $cache_storage_bytes,
     "storage_mib": $cache_storage_mib,
-    "storage_source": "$cache_storage_source"
+    "storage_source": "$cache_storage_source",
+    "storage_note": $(json_string_or_null "$cache_storage_note")
   },
   "classification": {
     "sample_valid": $sample_valid,
@@ -368,6 +374,9 @@ JSON
   if [[ "$cache_storage_bytes" != "0" ]]; then
     echo "| Cache storage | ${cache_storage_mib} MiB |"
     echo "| Storage source | ${cache_storage_source} |"
+    if [[ -n "$cache_storage_note" ]]; then
+      echo "| Storage note | ${cache_storage_note} |"
+    fi
   fi
 
   if [[ -n "$bytes_uploaded" ]]; then

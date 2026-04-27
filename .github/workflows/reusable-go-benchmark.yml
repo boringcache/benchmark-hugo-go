@@ -519,8 +519,21 @@ jobs:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
         run: |
           tags_csv="${{ needs.seed-cache.outputs.tags_csv }}"
-          bytes="$(./scripts/sum-boringcache-check-sizes.sh "$BENCHMARK_WORKSPACE" "$tags_csv")"
+          missing_tags_path="$(mktemp)"
+          bytes="$(BORINGCACHE_STORAGE_MISSING_PATH="$missing_tags_path" ./scripts/sum-boringcache-check-sizes.sh "$BENCHMARK_WORKSPACE" "$tags_csv")"
           echo "bytes=${bytes}" >> "$GITHUB_OUTPUT"
+          if [[ -s "$missing_tags_path" ]]; then
+            missing_tags="$(paste -sd, "$missing_tags_path")"
+            echo "note=partial measurement; missing tags: ${missing_tags}" >> "$GITHUB_OUTPUT"
+            {
+              echo "### BoringCache storage measurement"
+              echo ""
+              echo "Partial measurement: the run saved/restored enough to continue, but these expected tags were not found:"
+              sed 's/^/- `/' "$missing_tags_path" | sed 's/$/`/'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "note=all expected tags resolved" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Measure GHA cache storage usage
         if: inputs.strategy == 'actions-cache'
@@ -552,6 +565,7 @@ jobs:
             --warm1-seconds "${{ inputs.cache_lane == 'rolling' && '' || steps.timings.outputs.warm1_seconds }}" \
             --cache-storage-bytes "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.bytes || steps.ac_cache_size.outputs.bytes }}" \
             --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || 'github-actions-cache-api' }}" \
+            --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || '' }}" \
             --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run executes only the upstream-sync seed build; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: cold+seed run uses boringcache/one in mode=go to start the native Go GOCACHEPROG path, keeps the local GOCACHE empty per runner, and archives only go-mod-cache so module downloads stay comparable across runs. Warm1 restores that same module cache on a fresh runner and rebuilds the pinned source tree against the seeded remote Go build cache in read-only mode.' || 'Fresh lane: cold+seed run builds from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
 
       - name: Upload benchmark artifacts

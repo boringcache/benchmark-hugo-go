@@ -36,9 +36,15 @@ miss_count="$(
 )"
 
 if [[ "$miss_count" != "0" ]]; then
-  echo "boringcache check did not find every expected storage tag: ${tags_csv}" >&2
+  echo "warning: boringcache check did not find every expected storage tag: ${tags_csv}" >&2
   jq -r '.results[]? | "\(.tag // .entry // "unknown"): \(.status // "unknown")"' "$tmp_file" >&2
-  exit 1
+  if [[ -n "${BORINGCACHE_STORAGE_MISSING_PATH:-}" ]]; then
+    jq -r '
+      .results[]?
+      | select((.status // "") != "hit")
+      | .tag // .requested_tag // .requestedTag // "unknown"
+    ' "$tmp_file" > "$BORINGCACHE_STORAGE_MISSING_PATH"
+  fi
 fi
 
 to_num() {
