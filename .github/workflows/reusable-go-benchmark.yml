@@ -155,7 +155,7 @@ jobs:
           verify: wait
           cache-runtime: false
           verbose: true
-          diagnostics: logs
+          diagnostics: verbose
           diagnostics-log-lines: 160
           metadata-hints: |
             benchmark=${{ env.BENCHMARK_ID }}
@@ -401,7 +401,7 @@ jobs:
           verify: check
           cache-runtime: false
           verbose: true
-          diagnostics: logs
+          diagnostics: verbose
           diagnostics-log-lines: 160
           metadata-hints: |
             benchmark=${{ env.BENCHMARK_ID }}
