@@ -235,10 +235,9 @@ jobs:
               rm -rf "$GOMODCACHE" "$GOCACHE"
             fi
           else
+            # BoringCache restores the module cache explicitly; keep it on fresh runs
+            # so both strategies avoid re-downloading modules on empty runners.
             rm -rf "$GOCACHE"
-            if [[ "$CACHE_LANE" != "rolling" ]]; then
-              rm -rf "$GOMODCACHE"
-            fi
           fi
           mkdir -p "$GOMODCACHE" "$GOCACHE"
 
