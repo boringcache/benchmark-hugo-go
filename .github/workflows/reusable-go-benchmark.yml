@@ -155,6 +155,8 @@ jobs:
           verify: wait
           cache-runtime: false
           verbose: true
+          diagnostics: logs
+          diagnostics-log-lines: 160
           metadata-hints: |
             benchmark=${{ env.BENCHMARK_ID }}
             phase=seed
@@ -399,6 +401,8 @@ jobs:
           verify: check
           cache-runtime: false
           verbose: true
+          diagnostics: logs
+          diagnostics-log-lines: 160
           metadata-hints: |
             benchmark=${{ env.BENCHMARK_ID }}
             phase=warm
