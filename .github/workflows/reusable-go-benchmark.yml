@@ -48,7 +48,7 @@ jobs:
     outputs:
       cold_seconds: ${{ steps.cold_baseline_build.outputs.seconds }}
       scope_started_at: ${{ steps.scope.outputs.scope_started_at }}
-      tags_csv: ${{ steps.boringcache_one.outputs.resolved-tags || steps.scope.outputs.tags_csv }}
+      tags_csv: ${{ steps.scope.outputs.tags_csv }}
       seed_cache_key: ${{ steps.seed_cache_key.outputs.key }}
       cache_key_prefix: ${{ steps.scope.outputs.cache_key_prefix }}
       cache_scope: ${{ steps.scope.outputs.cache_scope }}
