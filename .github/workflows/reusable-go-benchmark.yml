@@ -48,7 +48,7 @@ jobs:
     outputs:
       cold_seconds: ${{ steps.cold_baseline_build.outputs.seconds }}
       scope_started_at: ${{ steps.scope.outputs.scope_started_at }}
-      tags_csv: ${{ steps.scope.outputs.tags_csv }}
+      tags_csv: ${{ steps.boringcache_one.outputs.resolved-tags }}
       seed_cache_key: ${{ steps.seed_cache_key.outputs.key }}
       cache_key_prefix: ${{ steps.scope.outputs.cache_key_prefix }}
       cache_scope: ${{ steps.scope.outputs.cache_scope }}
@@ -99,29 +99,9 @@ jobs:
             cache_key_primary="ac-${cache_scope}-seed1"
             cache_key_fallback="ac-${cache_scope}-seed2"
           fi
-          os_id="ubuntu"
-          os_major="24"
-          if [[ -r /etc/os-release ]]; then
-            # shellcheck disable=SC1091
-            source /etc/os-release
-            os_id="${ID:-ubuntu}"
-            os_major="${VERSION_ID%%.*}"
-          fi
-          arch="$(uname -m)"
-          case "$arch" in
-            amd64) arch="x86_64" ;;
-            aarch64) arch="arm64" ;;
-          esac
-          platform_slug="${os_id}-${os_major}-${arch}"
-          tag_modules="${cache_scope}-go-mod-cache-go-${GO_VERSION}"
-          tag_modules_storage="${tag_modules}-${platform_slug}"
-          tags_csv="${cache_scope},${tag_modules_storage}"
 
           echo "scope_started_at=${scope_started_at}" >> "$GITHUB_OUTPUT"
           echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
-          echo "tag_modules=${tag_modules}" >> "$GITHUB_OUTPUT"
-          echo "tag_modules_storage=${tag_modules_storage}" >> "$GITHUB_OUTPUT"
-          echo "tags_csv=${tags_csv}" >> "$GITHUB_OUTPUT"
           echo "cache_key_prefix=${cache_key_prefix}" >> "$GITHUB_OUTPUT"
           echo "cache_key_primary=${cache_key_primary}" >> "$GITHUB_OUTPUT"
           echo "cache_key_fallback=${cache_key_fallback}" >> "$GITHUB_OUTPUT"
@@ -166,8 +146,7 @@ jobs:
           working-directory: ./upstream
           proxy-no-git: 'true'
           proxy-no-platform: 'true'
-          entries: |
-            go-mod-cache
+          cache-profiles: benchmark
           verify: wait
           cache-runtime: false
           verbose: true
@@ -178,6 +157,8 @@ jobs:
             phase=seed
             tool=gocache
         env:
+          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
+          GOCACHE: ${{ env.GO_BUILD_CACHE }}
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
 
@@ -248,14 +229,14 @@ jobs:
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
         run: |
           set -euo pipefail
-          if [[ "${{ inputs.strategy }}" == "actions-cache" ]]; then
-            if [[ "$CACHE_LANE" != "rolling" ]]; then
+          if [[ "$CACHE_LANE" != "rolling" ]]; then
+            if [[ "${{ inputs.strategy }}" == "actions-cache" ]]; then
               rm -rf "$GOMODCACHE" "$GOCACHE"
+            else
+              # BoringCache restores the module cache via the benchmark
+              # profile; clear only the build cache for a fresh cold sample.
+              rm -rf "$GOCACHE"
             fi
-          else
-            # BoringCache restores the module cache explicitly; keep it on fresh runs
-            # so both strategies avoid re-downloading modules on empty runners.
-            rm -rf "$GOCACHE"
           fi
           mkdir -p "$GOMODCACHE" "$GOCACHE"
 
@@ -412,8 +393,8 @@ jobs:
           read-only: true
           proxy-no-git: 'true'
           proxy-no-platform: 'true'
-          entries: |
-            go-mod-cache
+          cache-profiles: benchmark
+          fail-on-cache-miss: true
           verify: check
           cache-runtime: false
           verbose: true
@@ -424,7 +405,25 @@ jobs:
             phase=warm
             tool=gocache
         env:
+          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
+          GOCACHE: ${{ env.GO_BUILD_CACHE }}
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+
+      - name: Verify hybrid archives restored
+        if: inputs.strategy == 'boringcache'
+        env:
+          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
+          GOCACHE: ${{ env.GO_BUILD_CACHE }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d "$GOMODCACHE" ]] || [[ -z "$(ls -A "$GOMODCACHE" 2>/dev/null)" ]]; then
+            echo "Missing or empty GOMODCACHE ($GOMODCACHE) after BoringCache restore" >&2
+            exit 1
+          fi
+          if [[ ! -d "$GOCACHE" ]] || [[ -z "$(ls -A "$GOCACHE" 2>/dev/null)" ]]; then
+            echo "Missing or empty GOCACHE ($GOCACHE) after BoringCache restore" >&2
+            exit 1
+          fi
 
       - name: Restore seeded actions/cache
         if: inputs.strategy == 'actions-cache'
@@ -443,9 +442,6 @@ jobs:
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
         run: |
           set -euo pipefail
-          if [[ "${{ inputs.strategy }}" != "actions-cache" ]]; then
-            rm -rf "$GOCACHE"
-          fi
           mkdir -p "$GOMODCACHE" "$GOCACHE"
 
           phase_start="${{ steps.scenario_timing_start.outputs.started_at }}"
@@ -582,7 +578,7 @@ jobs:
             --cache-storage-bytes "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.bytes || steps.ac_cache_size.outputs.bytes }}" \
             --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || 'github-actions-cache-api' }}" \
             --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || '' }}" \
-            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run executes only the upstream-sync seed build; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: cold+seed run uses boringcache/one in mode=go to start the native Go GOCACHEPROG path, keeps the local GOCACHE empty per runner, and archives only go-mod-cache so module downloads stay comparable across runs. Warm1 restores that same module cache on a fresh runner and rebuilds the pinned source tree against the seeded remote Go build cache in read-only mode.' || 'Fresh lane: cold+seed run builds from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
+            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run executes only the upstream-sync seed build; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: cold+seed run uses boringcache/one in mode=go to start the native Go GOCACHEPROG path, clears the local GOCACHE for a fresh cold sample, and archives both go-mod-cache and go-build-cache via the benchmark profile in .boringcache.toml. Warm1 restores both archives on a fresh runner and rebuilds the pinned source tree against the seeded remote Go build cache in read-only mode.' || 'Fresh lane: cold+seed run builds from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v6

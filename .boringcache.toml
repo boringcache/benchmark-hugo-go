@@ -1,0 +1,9 @@
+workspace = "boringcache/benchmarks"
+
+# CLI built-in entries: go-mod-cache reads $GOMODCACHE, go-build-cache
+# reads $GOCACHE. The benchmark profile includes both for warm/rolling
+# parity with actions/cache, which restores both directories under a
+# single run-scoped key.
+
+[profiles.benchmark]
+entries = ["go-mod-cache", "go-build-cache"]
