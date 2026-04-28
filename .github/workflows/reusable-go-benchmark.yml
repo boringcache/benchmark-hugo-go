@@ -99,12 +99,28 @@ jobs:
             cache_key_primary="ac-${cache_scope}-seed1"
             cache_key_fallback="ac-${cache_scope}-seed2"
           fi
+          os_id="ubuntu"
+          os_major="24"
+          if [[ -r /etc/os-release ]]; then
+            # shellcheck disable=SC1091
+            source /etc/os-release
+            os_id="${ID:-ubuntu}"
+            os_major="${VERSION_ID%%.*}"
+          fi
+          arch="$(uname -m)"
+          case "$arch" in
+            amd64) arch="x86_64" ;;
+            aarch64) arch="arm64" ;;
+          esac
+          platform_slug="${os_id}-${os_major}-${arch}"
           tag_modules="${cache_scope}-go-mod-cache-go-${GO_VERSION}"
-          tags_csv="${cache_scope},${tag_modules}"
+          tag_modules_storage="${tag_modules}-${platform_slug}"
+          tags_csv="${cache_scope},${tag_modules_storage}"
 
           echo "scope_started_at=${scope_started_at}" >> "$GITHUB_OUTPUT"
           echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
           echo "tag_modules=${tag_modules}" >> "$GITHUB_OUTPUT"
+          echo "tag_modules_storage=${tag_modules_storage}" >> "$GITHUB_OUTPUT"
           echo "tags_csv=${tags_csv}" >> "$GITHUB_OUTPUT"
           echo "cache_key_prefix=${cache_key_prefix}" >> "$GITHUB_OUTPUT"
           echo "cache_key_primary=${cache_key_primary}" >> "$GITHUB_OUTPUT"
