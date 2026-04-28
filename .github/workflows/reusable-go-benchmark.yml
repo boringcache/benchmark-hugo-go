@@ -176,7 +176,7 @@ jobs:
           metadata-hints: |
             benchmark=${{ env.BENCHMARK_ID }}
             phase=seed
-            tool=go
+            tool=gocache
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
@@ -422,7 +422,7 @@ jobs:
           metadata-hints: |
             benchmark=${{ env.BENCHMARK_ID }}
             phase=warm
-            tool=go
+            tool=gocache
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
 
