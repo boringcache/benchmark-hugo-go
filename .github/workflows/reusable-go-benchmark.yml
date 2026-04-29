@@ -385,14 +385,11 @@ jobs:
         uses: boringcache/one@v1
         with:
           setup: mise
-          mode: go
+          mode: archive
           tools: go@${{ env.GO_VERSION }}
           workspace: ${{ env.BENCHMARK_WORKSPACE }}
           cache-tag: ${{ steps.scope.outputs.cache_scope }}
           working-directory: ./upstream
-          read-only: true
-          proxy-no-git: 'true'
-          proxy-no-platform: 'true'
           cache-profiles: benchmark
           fail-on-cache-miss: true
           verify: check
@@ -578,7 +575,7 @@ jobs:
             --cache-storage-bytes "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.bytes || steps.ac_cache_size.outputs.bytes }}" \
             --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || 'github-actions-cache-api' }}" \
             --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || '' }}" \
-            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run executes only the upstream-sync seed build; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: cold+seed run uses boringcache/one in mode=go to start the native Go GOCACHEPROG path, clears the local GOCACHE for a fresh cold sample, and archives both go-mod-cache and go-build-cache via the benchmark profile in .boringcache.toml. Warm1 restores both archives on a fresh runner and rebuilds the pinned source tree against the seeded remote Go build cache in read-only mode.' || 'Fresh lane: cold+seed run builds from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
+            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run executes only the upstream-sync seed build; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: cold+seed run uses boringcache/one in mode=go to start the native Go GOCACHEPROG path, clears the local GOCACHE for a fresh cold sample, and archives both go-mod-cache and go-build-cache via the benchmark profile in .boringcache.toml. Warm1 switches to mode=archive on a fresh runner so the restored GOMODCACHE and GOCACHE are read directly from disk (no GOCACHEPROG round-trips); the archive replay matches actions/cache restore behavior end-to-end.' || 'Fresh lane: cold+seed run builds from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v6
