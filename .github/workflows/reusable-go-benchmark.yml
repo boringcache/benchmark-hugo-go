@@ -136,18 +136,12 @@ jobs:
         id: seed_timing_start
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Configure boringcache/one for actions-cache tooling
+      - name: Setup Go for actions/cache tooling
         if: inputs.strategy == 'actions-cache'
-        uses: boringcache/one@v1
+        uses: actions/setup-go@v6
         with:
-          setup: mise
-          mode: auto
-          tools: go@${{ env.GO_VERSION }}
-          workspace: ${{ env.BENCHMARK_WORKSPACE }}
-          working-directory: ./upstream
-          cache-runtime: false
-          save-policy: off
-          verbose: true
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Configure boringcache/one
         if: inputs.strategy == 'boringcache'
@@ -383,18 +377,12 @@ jobs:
         id: scenario_timing_start
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Configure boringcache/one for actions-cache tooling
+      - name: Setup Go for actions/cache tooling
         if: inputs.strategy == 'actions-cache'
-        uses: boringcache/one@v1
+        uses: actions/setup-go@v6
         with:
-          setup: mise
-          mode: auto
-          tools: go@${{ env.GO_VERSION }}
-          workspace: ${{ env.BENCHMARK_WORKSPACE }}
-          working-directory: ./upstream
-          cache-runtime: false
-          save-policy: off
-          verbose: true
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
 
       - name: Configure boringcache/one
         if: inputs.strategy == 'boringcache'
