@@ -62,6 +62,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     outputs:
       cold_seconds: ${{ steps.cold_baseline_build.outputs.seconds }}
+      cold_build_seconds: ${{ steps.cold_baseline_build.outputs.build_seconds }}
       scope_started_at: ${{ steps.scope.outputs.scope_started_at }}
       tags_csv: ${{ steps.boringcache_one.outputs.resolved-tags }}
       seed_cache_key: ${{ steps.seed_cache_key.outputs.key }}
@@ -536,6 +537,11 @@ jobs:
             fi
             local key="${phase//-/_}"
             echo "${key}_seconds=${seconds}" >> "$GITHUB_OUTPUT"
+            local build_seconds
+            build_seconds="$(grep "^build_seconds=" "$file" | head -n1 | cut -d= -f2- || true)"
+            if [[ -n "${build_seconds}" ]]; then
+              echo "${key}_build_seconds=${build_seconds}" >> "$GITHUB_OUTPUT"
+            fi
           }
           parse_phase warm1
 
@@ -589,7 +595,9 @@ jobs:
             --project-repo "$PROJECT_REPO" \
             --project-ref "${{ steps.upstream_ref.outputs.sha }}" \
             --cold-seconds "${{ needs.seed-cache.outputs.cold_seconds }}" \
+            --cold-build-seconds "${{ needs.seed-cache.outputs.cold_build_seconds }}" \
             --warm1-seconds "${{ inputs.cache_lane == 'rolling' && '' || steps.timings.outputs.warm1_seconds }}" \
+            --warm1-build-seconds "${{ inputs.cache_lane == 'rolling' && '' || steps.timings.outputs.warm1_build_seconds }}" \
             --cache-storage-bytes "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.bytes || steps.ac_cache_size.outputs.bytes }}" \
             --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || 'github-actions-cache-api' }}" \
             --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || '' }}" \
