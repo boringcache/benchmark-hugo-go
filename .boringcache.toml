@@ -1,9 +1,8 @@
 workspace = "boringcache/benchmarks"
 
-# CLI built-in entries: go-mod-cache reads $GOMODCACHE, go-build-cache
-# reads $GOCACHE. The benchmark profile includes both for warm/rolling
-# parity with actions/cache, which restores both directories under a
-# single run-scoped key.
+# Go remote-cache benchmark. boringcache/one mode=go owns the GOCACHEPROG
+# build-output cache, so the benchmark profile archives only the module
+# download cache that the remote adapter does not cover.
 
 [profiles.benchmark]
-entries = ["go-mod-cache", "go-build-cache"]
+entries = ["go-mod-cache"]
