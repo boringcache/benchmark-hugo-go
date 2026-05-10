@@ -68,6 +68,7 @@ jobs:
       seed_cache_key: ${{ steps.seed_cache_key.outputs.key }}
       cache_key_prefix: ${{ steps.scope.outputs.cache_key_prefix }}
       cache_scope: ${{ steps.scope.outputs.cache_scope }}
+      cache_import_status: ${{ steps.cache_import_status.outputs.status }}
     steps:
       - name: Validate BoringCache secrets
         if: inputs.strategy == 'boringcache'
@@ -223,6 +224,7 @@ jobs:
 
       - name: Restore rolling actions/cache history
         if: inputs.strategy == 'actions-cache' && inputs.cache_lane == 'rolling'
+        id: restore_rolling_ac
         uses: actions/cache/restore@v5
         with:
           path: |
@@ -231,6 +233,22 @@ jobs:
           key: ${{ steps.scope.outputs.cache_key_primary }}
           restore-keys: |
             ${{ steps.scope.outputs.cache_key_prefix }}-
+
+      - name: Resolve rolling cache import status
+        id: cache_import_status
+        env:
+          RESTORE_CACHE_MATCHED_KEY: ${{ steps.restore_rolling_ac.outputs.cache-matched-key }}
+        run: |
+          set -euo pipefail
+          status=""
+          if [[ "$CACHE_LANE" == "rolling" && "${{ inputs.strategy }}" == "actions-cache" ]]; then
+            if [[ -n "$RESTORE_CACHE_MATCHED_KEY" ]]; then
+              status="ok"
+            else
+              status="actions_cache_miss"
+            fi
+          fi
+          echo "status=${status}" >> "$GITHUB_OUTPUT"
 
       - name: ${{ inputs.cache_lane == 'rolling' && 'Run rolling seed-only build' || 'Run fresh seed build' }}
         id: cold_baseline_build
@@ -584,6 +602,7 @@ jobs:
             --cache-storage-bytes "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.bytes || steps.ac_cache_size.outputs.bytes }}" \
             --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || 'github-actions-cache-api' }}" \
             --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || '' }}" \
+            --cache-import-status "${{ needs.seed-cache.outputs.cache_import_status }}" \
             --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run executes only the upstream-sync seed build; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: cold+seed run uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the benchmark profile in .boringcache.toml. Warm1 restores the module cache on a fresh runner and rebuilds the pinned source tree against the seeded remote Go build cache in read-only mode.' || 'Fresh lane: cold+seed run builds from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
 
       - name: Upload benchmark artifacts
