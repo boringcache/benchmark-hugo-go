@@ -1,4 +1,4 @@
-workspace = "boringcache/benchmarks"
+workspace = "boringcache/benchmark-hugo-go"
 
 # Go remote-cache benchmark. boringcache/one mode=go owns the GOCACHEPROG
 # build-output cache, so the benchmark profile archives only the module

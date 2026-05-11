@@ -31,7 +31,7 @@ on:
       benchmark_workspace:
         required: false
         type: string
-        default: boringcache/benchmarks
+        default: ""
       go_version:
         required: true
         type: string
@@ -43,7 +43,7 @@ on:
 env:
   PROJECT_REPO: ${{ inputs.project_repo }}
   BENCHMARK_ID: ${{ inputs.benchmark_id }}
-  BENCHMARK_WORKSPACE: ${{ inputs.benchmark_workspace }}
+  BENCHMARK_WORKSPACE: ${{ inputs.benchmark_workspace || github.repository }}
   GO_VERSION: ${{ inputs.go_version }}
   BUILD_COMMAND: ${{ inputs.build_command }}
   CACHE_LANE: ${{ inputs.cache_lane }}
