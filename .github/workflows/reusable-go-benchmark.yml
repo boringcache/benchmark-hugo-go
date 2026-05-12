@@ -55,7 +55,7 @@ env:
 
 jobs:
   seed-cache:
-    name: ${{ format('Go Seed ({0}, {1})', inputs.strategy == 'actions-cache' && 'actions/cache' || 'BoringCache', inputs.cache_lane == 'rolling' && 'rolling' || 'fresh') }}
+    name: ${{ format('Go {0} ({1}, {2})', inputs.cache_lane == 'rolling' && 'Commit Build' || 'Cold Build', inputs.strategy == 'actions-cache' && 'actions/cache' || 'BoringCache', inputs.cache_lane == 'rolling' && 'rolling' || 'fresh') }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -250,7 +250,7 @@ jobs:
           fi
           echo "status=${status}" >> "$GITHUB_OUTPUT"
 
-      - name: ${{ inputs.cache_lane == 'rolling' && 'Run rolling seed-only build' || 'Run fresh seed build' }}
+      - name: ${{ inputs.cache_lane == 'rolling' && 'Run rolling commit build' || 'Run fresh cold build' }}
         id: cold_baseline_build
         env:
           GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
@@ -442,7 +442,7 @@ jobs:
             exit 1
           fi
 
-      - name: Restore seeded actions/cache
+      - name: Restore cache from fresh cold build
         if: inputs.strategy == 'actions-cache'
         uses: actions/cache/restore@v5
         with:
@@ -605,7 +605,7 @@ jobs:
             --mode go \
             --adapter gocache \
             --cache-import-status "${{ needs.seed-cache.outputs.cache_import_status }}" \
-            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run executes only the upstream-sync seed build; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: cold+seed run uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the benchmark profile in .boringcache.toml. Warm1 restores the module cache on a fresh runner and rebuilds the pinned source tree against the seeded remote Go build cache in read-only mode.' || 'Fresh lane: cold+seed run builds from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
+            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run builds the current upstream commit as-is with the prior rolling cache available, exports the updated cache, and records that commit build only; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: the cold build uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the benchmark profile in .boringcache.toml. Warm1 restores the module cache on a fresh runner and rebuilds the pinned source tree against the remote Go build cache populated by the cold build in read-only mode.' || 'Fresh lane: the cold build runs from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v6
