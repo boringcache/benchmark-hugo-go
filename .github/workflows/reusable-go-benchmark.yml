@@ -165,7 +165,7 @@ jobs:
           diagnostics-log-lines: 160
           metadata-hints: |
             benchmark=${{ env.BENCHMARK_ID }}
-            phase=seed
+            phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'seed' }}
             tool=gocache
         env:
           GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
@@ -553,9 +553,12 @@ jobs:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
         run: |
           tags_csv="${{ needs.seed-cache.outputs.tags_csv }}"
-          missing_tags_path="$(mktemp)"
-          bytes="$(BORINGCACHE_STORAGE_MISSING_PATH="$missing_tags_path" ./scripts/sum-boringcache-check-sizes.sh "$BENCHMARK_WORKSPACE" "$tags_csv")"
+          mkdir -p benchmark-storage
+          missing_tags_path="benchmark-storage/missing-tags.txt"
+          breakdown_path="benchmark-storage/boringcache-storage-breakdown.json"
+          bytes="$(BORINGCACHE_STORAGE_MISSING_PATH="$missing_tags_path" BORINGCACHE_STORAGE_BREAKDOWN_PATH="$breakdown_path" ./scripts/sum-boringcache-check-sizes.sh "$BENCHMARK_WORKSPACE" "$tags_csv")"
           echo "bytes=${bytes}" >> "$GITHUB_OUTPUT"
+          echo "breakdown_path=${breakdown_path}" >> "$GITHUB_OUTPUT"
           if [[ -s "$missing_tags_path" ]]; then
             missing_tags="$(paste -sd, "$missing_tags_path")"
             echo "note=partial measurement; missing tags: ${missing_tags}" >> "$GITHUB_OUTPUT"
@@ -602,6 +605,7 @@ jobs:
             --cache-storage-bytes "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.bytes || steps.ac_cache_size.outputs.bytes }}" \
             --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || 'github-actions-cache-api' }}" \
             --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || '' }}" \
+            --storage-breakdown-json "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.breakdown_path || '' }}" \
             --mode go \
             --adapter gocache \
             --cache-import-status "${{ needs.seed-cache.outputs.cache_import_status }}" \
