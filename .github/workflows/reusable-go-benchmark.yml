@@ -55,7 +55,7 @@ env:
 
 jobs:
   seed-cache:
-    name: ${{ format('Go {0} ({1}, {2})', inputs.cache_lane == 'rolling' && 'Commit Build' || 'Cold Build', inputs.strategy == 'actions-cache' && 'actions/cache' || 'BoringCache', inputs.cache_lane == 'rolling' && 'rolling' || 'fresh') }}
+    name: ${{ format('Go {0} ({1}, {2})', inputs.cache_lane == 'rolling' && 'Commit Build' || 'Cold Build', inputs.strategy == 'actions-cache' && 'actions/cache' || inputs.strategy == 'depot-cache' && 'Depot Cache' || 'BoringCache', inputs.cache_lane == 'rolling' && 'rolling' || 'fresh') }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -105,16 +105,21 @@ jobs:
           ref_slug="${ref_slug#-}"
           ref_slug="${ref_slug%-}"
           ref_slug="${ref_slug:-main}"
+          cache_key_namespace="ac"
+          if [[ "${{ inputs.strategy }}" == "depot-cache" ]]; then
+            cache_key_namespace="depot-deps"
+          fi
+
           if [[ "$CACHE_LANE" == "rolling" ]]; then
             cache_scope="${BENCHMARK_ID}-rolling-${ref_slug}"
-            cache_key_prefix="ac-${BENCHMARK_ID}-rolling-${ref_slug}"
+            cache_key_prefix="${cache_key_namespace}-${BENCHMARK_ID}-rolling-${ref_slug}"
             cache_key_primary="${cache_key_prefix}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-seed1"
             cache_key_fallback="${cache_key_prefix}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-seed2"
           else
             cache_scope="${BENCHMARK_ID}-run-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
-            cache_key_prefix="ac-${cache_scope}"
-            cache_key_primary="ac-${cache_scope}-seed1"
-            cache_key_fallback="ac-${cache_scope}-seed2"
+            cache_key_prefix="${cache_key_namespace}-${cache_scope}"
+            cache_key_primary="${cache_key_namespace}-${cache_scope}-seed1"
+            cache_key_fallback="${cache_key_namespace}-${cache_scope}-seed2"
           fi
 
           echo "scope_started_at=${scope_started_at}" >> "$GITHUB_OUTPUT"
@@ -137,12 +142,31 @@ jobs:
         id: seed_timing_start
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Go for actions/cache tooling
-        if: inputs.strategy == 'actions-cache'
+      - name: Setup Go
+        if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
+
+      - name: Install Depot CLI
+        if: inputs.strategy == 'depot-cache'
+        uses: depot/setup-action@v1
+
+      - name: Configure Depot Cache for Go
+        if: inputs.strategy == 'depot-cache'
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+          DEPOT_ORG_ID: ${{ secrets.DEPOT_ORG_ID || vars.DEPOT_ORG_ID || '' }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DEPOT_TOKEN" ]] || { echo "Missing Depot token" >&2; exit 1; }
+          depot version
+          if [[ -n "$DEPOT_ORG_ID" ]]; then
+            echo "GOCACHEPROG=depot gocache --organization ${DEPOT_ORG_ID}" >> "$GITHUB_ENV"
+          else
+            echo "GOCACHEPROG=depot gocache" >> "$GITHUB_ENV"
+          fi
 
       - name: Configure boringcache/one
         if: inputs.strategy == 'boringcache'
@@ -174,7 +198,7 @@ jobs:
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
 
       - name: Purge benchmark GHA cache keys
-        if: inputs.strategy == 'actions-cache' && inputs.cache_lane != 'rolling'
+        if: (inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache') && inputs.cache_lane != 'rolling'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -199,14 +223,14 @@ jobs:
           done
 
       - name: Prepare AC write probe
-        if: inputs.strategy == 'actions-cache'
+        if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         run: |
           set -euo pipefail
           mkdir -p .bench-cache-probe
           printf '%s\n' "probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(date +%s)" > .bench-cache-probe/probe.txt
 
       - name: Verify Actions Cache write access
-        if: inputs.strategy == 'actions-cache'
+        if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         id: cache_write_probe
         continue-on-error: true
         uses: actions/cache/save@v5
@@ -216,7 +240,7 @@ jobs:
           key: ac-${{ env.BENCHMARK_ID }}-write-probe-r${{ github.run_id }}-a${{ github.run_attempt }}
 
       - name: Fail early if Actions Cache is read-only
-        if: inputs.strategy == 'actions-cache' && steps.cache_write_probe.outcome != 'success'
+        if: (inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache') && steps.cache_write_probe.outcome != 'success'
         run: |
           echo "Actions Cache write probe failed (likely read-only budget/spending cap)." >&2
           echo "Cannot produce reliable AC benchmark results until cache writes are enabled." >&2
@@ -230,6 +254,17 @@ jobs:
           path: |
             ${{ env.GO_MODULE_CACHE }}
             ${{ env.GO_BUILD_CACHE }}
+          key: ${{ steps.scope.outputs.cache_key_primary }}
+          restore-keys: |
+            ${{ steps.scope.outputs.cache_key_prefix }}-
+
+      - name: Restore rolling Depot dependency cache history
+        if: inputs.strategy == 'depot-cache' && inputs.cache_lane == 'rolling'
+        id: restore_rolling_depot_deps
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ env.GO_MODULE_CACHE }}
           key: ${{ steps.scope.outputs.cache_key_primary }}
           restore-keys: |
             ${{ steps.scope.outputs.cache_key_prefix }}-
@@ -255,10 +290,11 @@ jobs:
         env:
           GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
+          DEPOT_TOKEN: ${{ inputs.strategy == 'depot-cache' && secrets.DEPOT_TOKEN || '' }}
         run: |
           set -euo pipefail
           if [[ "$CACHE_LANE" != "rolling" ]]; then
-            if [[ "${{ inputs.strategy }}" == "actions-cache" ]]; then
+            if [[ "${{ inputs.strategy }}" == "actions-cache" || "${{ inputs.strategy }}" == "depot-cache" ]]; then
               rm -rf "$GOMODCACHE" "$GOCACHE"
             else
               # BoringCache restores the module cache via the benchmark
@@ -297,8 +333,28 @@ jobs:
             ${{ env.GO_BUILD_CACHE }}
           key: ${{ steps.scope.outputs.cache_key_fallback }}
 
+      - name: Save seeded Depot dependency cache (primary key)
+        if: inputs.strategy == 'depot-cache'
+        id: save_depot_deps_primary
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ${{ env.GO_MODULE_CACHE }}
+          key: ${{ steps.scope.outputs.cache_key_primary }}
+
+      - name: Save seeded Depot dependency cache (fallback key)
+        if: inputs.strategy == 'depot-cache' && steps.save_depot_deps_primary.outcome != 'success'
+        id: save_depot_deps_fallback
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ${{ env.GO_MODULE_CACHE }}
+          key: ${{ steps.scope.outputs.cache_key_fallback }}
+
       - name: Resolve seeded cache key
-        if: inputs.strategy == 'actions-cache'
+        if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         id: seed_cache_key
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -326,6 +382,8 @@ jobs:
             echo "Failed to verify seeded cache key in GHA cache API (likely cache save/read-only budget issue)." >&2
             echo "Primary save outcome: ${{ steps.save_seed_primary.outcome }}" >&2
             echo "Fallback save outcome: ${{ steps.save_seed_fallback.outcome }}" >&2
+            echo "Depot dependency primary save outcome: ${{ steps.save_depot_deps_primary.outcome }}" >&2
+            echo "Depot dependency fallback save outcome: ${{ steps.save_depot_deps_fallback.outcome }}" >&2
             exit 1
           fi
 
@@ -395,12 +453,31 @@ jobs:
         id: scenario_timing_start
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Go for actions/cache tooling
-        if: inputs.strategy == 'actions-cache'
+      - name: Setup Go
+        if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
+
+      - name: Install Depot CLI
+        if: inputs.strategy == 'depot-cache'
+        uses: depot/setup-action@v1
+
+      - name: Configure Depot Cache for Go
+        if: inputs.strategy == 'depot-cache'
+        env:
+          DEPOT_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+          DEPOT_ORG_ID: ${{ secrets.DEPOT_ORG_ID || vars.DEPOT_ORG_ID || '' }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DEPOT_TOKEN" ]] || { echo "Missing Depot token" >&2; exit 1; }
+          depot version
+          if [[ -n "$DEPOT_ORG_ID" ]]; then
+            echo "GOCACHEPROG=depot gocache --organization ${DEPOT_ORG_ID}" >> "$GITHUB_ENV"
+          else
+            echo "GOCACHEPROG=depot gocache" >> "$GITHUB_ENV"
+          fi
 
       - name: Configure boringcache/one
         if: inputs.strategy == 'boringcache'
@@ -452,11 +529,21 @@ jobs:
           key: ${{ needs.seed-cache.outputs.seed_cache_key }}
           fail-on-cache-miss: true
 
+      - name: Restore Depot dependency cache from fresh cold build
+        if: inputs.strategy == 'depot-cache'
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ env.GO_MODULE_CACHE }}
+          key: ${{ needs.seed-cache.outputs.seed_cache_key }}
+          fail-on-cache-miss: true
+
       - name: Run scenario build
         id: phase_build
         env:
           GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
+          DEPOT_TOKEN: ${{ inputs.strategy == 'depot-cache' && secrets.DEPOT_TOKEN || '' }}
         run: |
           set -euo pipefail
           mkdir -p "$GOMODCACHE" "$GOCACHE"
@@ -573,7 +660,7 @@ jobs:
           fi
 
       - name: Measure GHA cache storage usage
-        if: inputs.strategy == 'actions-cache'
+        if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         id: ac_cache_size
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -603,13 +690,15 @@ jobs:
             --warm1-seconds "${{ inputs.cache_lane == 'rolling' && '' || steps.timings.outputs.warm1_seconds }}" \
             --warm1-build-seconds "${{ inputs.cache_lane == 'rolling' && '' || steps.timings.outputs.warm1_build_seconds }}" \
             --cache-storage-bytes "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.bytes || steps.ac_cache_size.outputs.bytes }}" \
-            --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || 'github-actions-cache-api' }}" \
-            --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || '' }}" \
+            --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || inputs.strategy == 'depot-cache' && 'github-actions-cache-api-partial' || 'github-actions-cache-api' }}" \
+            --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || inputs.strategy == 'depot-cache' && 'Partial measurement: this is the GitHub Actions module dependency cache only; Depot remote Go build-cache storage is visible in the Depot Cache UI, not the GitHub Actions cache API.' || '' }}" \
             --storage-breakdown-json "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.breakdown_path || '' }}" \
             --mode go \
             --adapter gocache \
             --cache-import-status "${{ needs.seed-cache.outputs.cache_import_status }}" \
-            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run builds the current upstream commit as-is with the prior rolling cache available, exports the updated cache, and records that commit build only; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: the cold build uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the benchmark profile in .boringcache.toml. Warm1 restores the module cache on a fresh runner and rebuilds the pinned source tree against the remote Go build cache populated by the cold build in read-only mode.' || 'Fresh lane: the cold build runs from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
+            --action-ref "${{ inputs.strategy == 'depot-cache' && 'depot/setup-action@v1' || inputs.strategy == 'boringcache' && 'boringcache/one@v1' || 'actions/cache@v5' }}" \
+            --api-url "${{ inputs.strategy == 'depot-cache' && 'https://cache.depot.dev' || inputs.strategy == 'boringcache' && 'https://api.boringcache.com' || '' }}" \
+            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run builds the current upstream commit as-is with the prior rolling cache available, exports the updated cache, and records that commit build only; warm1 follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: the cold build uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the benchmark profile in .boringcache.toml. Warm1 restores the module cache on a fresh runner and rebuilds the pinned source tree against the remote Go build cache populated by the cold build in read-only mode.' || inputs.strategy == 'depot-cache' && 'Fresh lane: the cold build installs the Depot CLI, configures Go with GOCACHEPROG=depot gocache, clears local GOMODCACHE and GOCACHE, and writes build outputs to Depot Cache. Warm1 restores only the module dependency cache through actions/cache on a fresh runner and rebuilds the same pinned source tree against Depot Cache for Go build outputs.' || 'Fresh lane: the cold build runs from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm1 restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}"
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v6
