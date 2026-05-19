@@ -55,7 +55,7 @@ env:
 
 jobs:
   seed-cache:
-    name: ${{ format('Go {0} ({1}, {2})', inputs.cache_lane == 'rolling' && 'Commit Build' || 'Cold Build', inputs.strategy == 'actions-cache' && 'actions/cache' || inputs.strategy == 'depot-cache' && 'Depot Cache' || 'BoringCache', inputs.cache_lane == 'rolling' && 'rolling' || 'fresh') }}
+    name: ${{ format('Go {0} ({1}, {2})', inputs.cache_lane == 'rolling' && 'Commit Build' || 'Cold Build', inputs.strategy == 'actions-cache' && 'GitHub Actions Cache' || inputs.strategy == 'depot-cache' && 'Depot Cache' || 'BoringCache', inputs.cache_lane == 'rolling' && 'rolling' || 'fresh') }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -197,7 +197,7 @@ jobs:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
 
-      - name: Purge benchmark GHA cache keys
+      - name: Purge GitHub Actions cache keys
         if: (inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache') && inputs.cache_lane != 'rolling'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -222,14 +222,14 @@ jobs:
             done
           done
 
-      - name: Prepare AC write probe
+      - name: Prepare GitHub Actions Cache write probe
         if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         run: |
           set -euo pipefail
           mkdir -p .bench-cache-probe
           printf '%s\n' "probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(date +%s)" > .bench-cache-probe/probe.txt
 
-      - name: Verify Actions Cache write access
+      - name: Verify GitHub Actions Cache write access
         if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         id: cache_write_probe
         continue-on-error: true
@@ -239,11 +239,11 @@ jobs:
             .bench-cache-probe
           key: ac-${{ env.BENCHMARK_ID }}-write-probe-r${{ github.run_id }}-a${{ github.run_attempt }}
 
-      - name: Fail early if Actions Cache is read-only
+      - name: Fail early if GitHub Actions Cache is read-only
         if: (inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache') && steps.cache_write_probe.outcome != 'success'
         run: |
-          echo "Actions Cache write probe failed (likely read-only budget/spending cap)." >&2
-          echo "Cannot produce reliable AC benchmark results until cache writes are enabled." >&2
+          echo "GitHub Actions Cache write probe failed (likely read-only budget/spending cap)." >&2
+          echo "Cannot produce reliable GitHub Actions Cache benchmark results until cache writes are enabled." >&2
           exit 1
 
       - name: Restore rolling actions/cache history
@@ -379,7 +379,7 @@ jobs:
           done
 
           if [[ -z "$key" ]]; then
-            echo "Failed to verify seeded cache key in GHA cache API (likely cache save/read-only budget issue)." >&2
+            echo "Failed to verify seeded cache key in GitHub Actions Cache API (likely cache save/read-only budget issue)." >&2
             echo "Primary save outcome: ${{ steps.save_seed_primary.outcome }}" >&2
             echo "Fallback save outcome: ${{ steps.save_seed_fallback.outcome }}" >&2
             echo "Depot dependency primary save outcome: ${{ steps.save_depot_deps_primary.outcome }}" >&2
@@ -391,7 +391,7 @@ jobs:
           echo "Using seeded cache key: ${key}"
 
   scenario-builds:
-    name: Go Warm rerun (${{ inputs.strategy }})
+    name: ${{ format('Go Warm rerun ({0})', inputs.strategy == 'actions-cache' && 'GitHub Actions Cache' || inputs.strategy == 'depot-cache' && 'Depot Cache' || 'BoringCache') }}
     needs: seed-cache
     if: ${{ inputs.cache_lane != 'rolling' }}
     runs-on: ubuntu-latest
@@ -659,7 +659,7 @@ jobs:
             echo "note=all expected tags resolved" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Measure GHA cache storage usage
+      - name: Measure GitHub Actions Cache storage usage
         if: inputs.strategy == 'actions-cache' || inputs.strategy == 'depot-cache'
         id: ac_cache_size
         env:
