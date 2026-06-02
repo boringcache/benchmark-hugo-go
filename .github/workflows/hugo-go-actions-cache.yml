@@ -13,19 +13,6 @@ on:
         options:
           - fresh
           - rolling
-  schedule:
-    - cron: "0 4 * * 1"
-  pull_request:
-    paths:
-      - ".gitmodules"
-      - ".github/workflows/hugo-go-boringcache.yml"
-      - ".github/workflows/hugo-go-actions-cache.yml"
-      - ".github/workflows/reusable-go-benchmark.yml"
-      - "README.md"
-      - "scenarios/**"
-      - "scripts/**"
-      - "upstream"
-
 permissions:
   contents: read
   actions: read

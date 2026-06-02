@@ -62,6 +62,5 @@ jobs:
           git push origin HEAD:main
 
           if [[ "${HAS_BOT_TOKEN}" != "true" ]]; then
-            gh workflow run "hugo-go-actions-cache.yml" --repo "$GITHUB_REPOSITORY" --ref main -f cache_lane=rolling
-            gh workflow run "hugo-go-boringcache.yml" --repo "$GITHUB_REPOSITORY" --ref main -f cache_lane=rolling
+            gh workflow run "hugo-go-benchmark.yml" --repo "$GITHUB_REPOSITORY" --ref main -f cache_lane=rolling
           fi
