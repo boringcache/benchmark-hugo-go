@@ -1,6 +1,6 @@
-name: "Hugo Go - Depot Cache"
+name: "Hugo Go - Depot"
 run-name: >-
-  ${{ format('{0} | {1}', github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'rolling' && 'Depot Cache Rolling' || 'Depot Cache Fresh', github.event_name == 'schedule' && 'Weekly fresh' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
+  ${{ format('{0} | {1}', github.event_name == 'workflow_dispatch' && inputs.cache_lane == 'rolling' && 'Depot Rolling' || 'Depot Fresh', github.event_name == 'schedule' && 'Weekly fresh' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
 
 on:
   workflow_dispatch:
@@ -19,6 +19,7 @@ permissions:
 
 jobs:
   benchmark:
+    name: Depot
     uses: ./.github/workflows/reusable-go-benchmark.yml
     with:
       benchmark_id: hugo-go

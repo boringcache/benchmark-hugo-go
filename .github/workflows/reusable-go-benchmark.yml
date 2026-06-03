@@ -55,7 +55,7 @@ env:
 
 jobs:
   seed-cache:
-    name: ${{ format('Go {0} ({1}, {2})', inputs.cache_lane == 'rolling' && 'Commit Build' || 'Cold Build', inputs.strategy == 'actions-cache' && 'GitHub Actions Cache' || inputs.strategy == 'depot-cache' && 'Depot Cache' || 'BoringCache', inputs.cache_lane == 'rolling' && 'rolling' || 'fresh') }}
+    name: ${{ inputs.cache_lane == 'rolling' && 'Commit' || 'Cold' }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
@@ -414,7 +414,7 @@ jobs:
           echo "Using seeded cache key: ${key}"
 
   scenario-builds:
-    name: ${{ format('Go Warm rerun ({0})', inputs.strategy == 'actions-cache' && 'GitHub Actions Cache' || inputs.strategy == 'depot-cache' && 'Depot Cache' || 'BoringCache') }}
+    name: Warm
     needs: seed-cache
     if: ${{ inputs.cache_lane != 'rolling' }}
     runs-on: ubuntu-latest
@@ -596,7 +596,7 @@ jobs:
           if-no-files-found: error
 
   finalize-benchmark:
-    name: Finalize benchmark artifacts
+    name: Report
     needs: [seed-cache, scenario-builds]
     if: ${{ always() && needs.seed-cache.result == 'success' && (needs.scenario-builds.result == 'success' || needs.scenario-builds.result == 'skipped') }}
     runs-on: ubuntu-latest
