@@ -1,0 +1,44 @@
+name: "Hugo Go Fresh"
+run-name: >-
+  ${{ format('Benchmark {0} | {1}', inputs.cli_version != '' && 'Canary' || 'Fresh', github.event_name == 'schedule' && 'Weekly' || format('Manual dispatch ({0})', github.ref_name)) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: "Optional BoringCache CLI release tag for canary runs."
+        required: false
+        type: string
+        default: ""
+  schedule:
+    - cron: "0 4 * * 1"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  github-actions-cache:
+    name: GHA
+    uses: ./.github/workflows/reusable-go-benchmark.yml
+    with:
+      benchmark_id: hugo-go
+      project_repo: gohugoio/hugo
+      strategy: actions-cache
+      cache_lane: fresh
+      go_version: "1.26.0"
+      build_command: go build -trimpath -buildvcs=false ./...
+    secrets: inherit
+
+  boringcache:
+    name: BC
+    uses: ./.github/workflows/reusable-go-benchmark.yml
+    with:
+      benchmark_id: hugo-go
+      project_repo: gohugoio/hugo
+      strategy: boringcache
+      cache_lane: fresh
+      cli_version: ${{ inputs.cli_version }}
+      go_version: "1.26.0"
+      build_command: go build -trimpath -buildvcs=false ./...
+    secrets: inherit
