@@ -150,7 +150,7 @@ jobs:
       - name: Configure boringcache/one
         if: inputs.strategy == 'boringcache'
         id: boringcache_one
-        uses: boringcache/one@one-canary-c94c9b2c513d
+        uses: boringcache/one@one-canary-803bc6649fa9
         with:
           setup: mise
           cli-version: ${{ inputs.cli_version }}
@@ -430,7 +430,7 @@ jobs:
 
       - name: Configure boringcache/one
         if: inputs.strategy == 'boringcache'
-        uses: boringcache/one@one-canary-c94c9b2c513d
+        uses: boringcache/one@one-canary-803bc6649fa9
         with:
           setup: mise
           cli-version: ${{ inputs.cli_version }}
@@ -526,7 +526,7 @@ jobs:
 
       - name: Install BoringCache CLI with boringcache/one
         if: inputs.strategy == 'boringcache'
-        uses: boringcache/one@one-canary-c94c9b2c513d
+        uses: boringcache/one@one-canary-803bc6649fa9
         with:
           setup: none
           cli-version: ${{ inputs.cli_version }}
@@ -651,7 +651,7 @@ jobs:
             --mode go \
             --adapter gocache \
             --cache-import-status "${{ needs.seed-cache.outputs.cache_import_status }}" \
-            --action-ref "${{ inputs.strategy == 'boringcache' && 'boringcache/one@one-canary-c94c9b2c513d' || 'actions/cache@v5' }}" \
+            --action-ref "${{ inputs.strategy == 'boringcache' && 'boringcache/one@one-canary-803bc6649fa9' || 'actions/cache@v5' }}" \
             --api-url "${{ inputs.strategy == 'boringcache' && 'https://api.boringcache.com' || '' }}" \
             --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run builds the current upstream commit as-is with the prior rolling cache available, exports the updated cache, and records that commit build only; warm follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: the cold build uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the benchmark profile in .boringcache.toml. Warm restores the module cache on a fresh runner and rebuilds the pinned source tree against the remote Go build cache populated by the cold build in read-only mode.' || 'Fresh lane: the cold build runs from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}" \
             "${cache_summary_args[@]}"
