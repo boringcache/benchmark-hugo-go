@@ -162,7 +162,6 @@ jobs:
           proxy-no-git: 'true'
           proxy-no-platform: 'true'
           cache-profiles: benchmark
-          verify: wait
           cache-runtime: false
           verbose: true
           diagnostics: verbose
@@ -445,7 +444,6 @@ jobs:
           proxy-no-platform: 'true'
           cache-profiles: benchmark
           fail-on-cache-miss: true
-          verify: check
           cache-runtime: false
           verbose: true
           diagnostics: verbose
