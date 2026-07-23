@@ -55,6 +55,7 @@ jobs:
       cold_build_seconds: ${{ steps.cold_baseline_build.outputs.build_seconds }}
       scope_started_at: ${{ steps.scope.outputs.scope_started_at }}
       tags_csv: ${{ steps.boringcache_storage_tags.outputs.tags_csv }}
+      native_tag: ${{ steps.scope.outputs.cache_scope }}
       seed_cache_key: ${{ steps.seed_cache_key.outputs.key }}
       cache_key_prefix: ${{ steps.scope.outputs.cache_key_prefix }}
       cache_scope: ${{ steps.scope.outputs.cache_scope }}
@@ -635,7 +636,7 @@ jobs:
         env:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
         run: |
-          tags_csv="${{ needs.seed-cache.outputs.tags_csv }}"
+          tags_csv="${{ needs.seed-cache.outputs.tags_csv }},${{ needs.seed-cache.outputs.native_tag }}"
           mkdir -p benchmark-storage
           missing_tags_path="benchmark-storage/missing-tags.txt"
           breakdown_path="benchmark-storage/boringcache-storage-breakdown.json"
