@@ -485,6 +485,9 @@ jobs:
           cache-tag: ${{ steps.scope.outputs.cache_scope }}
           working-directory: ./upstream
           read-only: true
+          # The cold job publishes a run-scoped PR alias. This keeps the
+          # read-only warm lookup in that same scope without permitting writes.
+          save-on-pull-request: ${{ inputs.cache_lane == 'fresh' }}
           proxy-no-git: 'true'
           proxy-no-platform: 'true'
           cache-profiles: benchmark
