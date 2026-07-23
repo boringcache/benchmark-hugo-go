@@ -54,7 +54,7 @@ jobs:
       cold_seconds: ${{ steps.cold_baseline_build.outputs.seconds }}
       cold_build_seconds: ${{ steps.cold_baseline_build.outputs.build_seconds }}
       scope_started_at: ${{ steps.scope.outputs.scope_started_at }}
-      tags_csv: ${{ steps.boringcache_one.outputs.resolved-tags }}
+      tags_csv: ${{ steps.boringcache_storage_tags.outputs.tags_csv }}
       seed_cache_key: ${{ steps.seed_cache_key.outputs.key }}
       cache_key_prefix: ${{ steps.scope.outputs.cache_key_prefix }}
       cache_scope: ${{ steps.scope.outputs.cache_scope }}
@@ -163,6 +163,9 @@ jobs:
           proxy-no-platform: 'true'
           cache-profiles: benchmark
           cache-runtime: false
+          # Fresh caches are scoped to this run and attempt, and the warm job
+          # requires the cold job to publish them during pull-request validation.
+          save-on-pull-request: ${{ inputs.cache_lane == 'fresh' }}
           verbose: true
           diagnostics: verbose
           diagnostics-log-lines: 160
@@ -176,6 +179,27 @@ jobs:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
           BORINGCACHE_OBSERVABILITY_JSONL_PATH: ${{ runner.temp }}/${{ env.BENCHMARK_ID }}-boringcache-build-observability.jsonl
+
+      - name: Resolve BoringCache archive storage tags
+        if: inputs.strategy == 'boringcache'
+        id: boringcache_storage_tags
+        env:
+          RESOLVED_TAGS: ${{ steps.boringcache_one.outputs.resolved-tags }}
+          PROXY_TAG: ${{ steps.scope.outputs.cache_scope }}
+        run: |
+          set -euo pipefail
+          storage_tags=()
+          IFS=',' read -ra candidates <<<"$RESOLVED_TAGS"
+          for tag in "${candidates[@]}"; do
+            [[ -n "$tag" && "$tag" != "$PROXY_TAG" ]] || continue
+            storage_tags+=("$tag")
+          done
+          if (( ${#storage_tags[@]} == 0 )); then
+            echo "No archive storage tags were resolved by boringcache/one" >&2
+            exit 1
+          fi
+          tags_csv="$(IFS=,; echo "${storage_tags[*]}")"
+          echo "tags_csv=${tags_csv}" >> "$GITHUB_OUTPUT"
 
       - name: Purge GitHub Actions cache keys
         if: inputs.strategy == 'actions-cache' && inputs.cache_lane != 'rolling'
@@ -283,14 +307,35 @@ jobs:
         if: inputs.strategy == 'boringcache' && always()
         env:
           BORINGCACHE_OBSERVABILITY_JSONL_PATH: ${{ runner.temp }}/${{ env.BENCHMARK_ID }}-boringcache-build-observability.jsonl
+          BORINGCACHE_PROXY_PORT: ${{ steps.boringcache_one.outputs.proxy-port }}
         run: |
           set -euo pipefail
           mkdir -p benchmark-session-summary
-          if [[ -s "$BORINGCACHE_OBSERVABILITY_JSONL_PATH" ]]; then
+
+          status_json=""
+          for _ in $(seq 1 60); do
+            status_json="$(curl --fail --silent --show-error --max-time 2 \
+              "http://127.0.0.1:${BORINGCACHE_PROXY_PORT}/_boringcache/status" || true)"
+            if jq -e '
+              .publish_settled == true and
+              (.session_summary | type == "object") and
+              (.session_summary.schema == "cache-session-v2")
+            ' <<<"$status_json" >/dev/null 2>&1; then
+              jq -c '.session_summary' <<<"$status_json" > benchmark-session-summary/benchmark-session-summary.json
+              break
+            fi
+            sleep 0.5
+          done
+
+          if [[ ! -s benchmark-session-summary/benchmark-session-summary.json && -s "$BORINGCACHE_OBSERVABILITY_JSONL_PATH" ]]; then
             jq -c 'select(.operation == "cache_session_summary") | .summary // .details // .' "$BORINGCACHE_OBSERVABILITY_JSONL_PATH" 2>/dev/null | tail -n 1 > benchmark-session-summary/benchmark-session-summary.json || true
           fi
           if [[ ! -s benchmark-session-summary/benchmark-session-summary.json ]]; then
-            rm -f benchmark-session-summary/benchmark-session-summary.json
+            echo "BoringCache proxy did not produce a settled cache session summary" >&2
+            if [[ -n "$status_json" ]]; then
+              jq '{phase, publish_state, publish_settled}' <<<"$status_json" >&2 || true
+            fi
+            exit 1
           fi
 
       - name: Upload BoringCache session summary
@@ -299,7 +344,7 @@ jobs:
         with:
           name: benchmark-session-summary-${{ env.BENCHMARK_ID }}-boringcache-${{ inputs.cache_lane }}
           path: benchmark-session-summary/benchmark-session-summary.json
-          if-no-files-found: ignore
+          if-no-files-found: error
 
       - name: Save build cache (primary key)
         if: inputs.strategy == 'actions-cache'
@@ -440,6 +485,9 @@ jobs:
           cache-tag: ${{ steps.scope.outputs.cache_scope }}
           working-directory: ./upstream
           read-only: true
+          # The cold job publishes a run-scoped PR alias. This keeps the
+          # read-only warm lookup in that same scope without permitting writes.
+          save-on-pull-request: ${{ inputs.cache_lane == 'fresh' }}
           proxy-no-git: 'true'
           proxy-no-platform: 'true'
           cache-profiles: benchmark
