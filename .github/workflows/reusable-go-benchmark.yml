@@ -166,6 +166,7 @@ jobs:
           # Fresh caches are scoped to this run and attempt, and the warm job
           # requires the cold job to publish them during pull-request validation.
           save-on-pull-request: ${{ inputs.cache_lane == 'fresh' }}
+          fail-on-cache-error: ${{ inputs.cache_lane == 'fresh' }}
           verbose: true
           diagnostics: verbose
           diagnostics-log-lines: 160
