@@ -126,6 +126,8 @@ jobs:
           echo "cache_key_primary=${cache_key_primary}" >> "$GITHUB_OUTPUT"
           echo "cache_key_fallback=${cache_key_fallback}" >> "$GITHUB_OUTPUT"
 
+          ./scripts/scope-boringcache-run.sh "$cache_scope"
+
           cat > ./run-go-phase.sh <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -170,6 +172,7 @@ jobs:
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+          BORINGCACHE_NO_GIT: "true"
           BORINGCACHE_OBSERVABILITY_JSONL_PATH: ${{ runner.temp }}/${{ env.BENCHMARK_ID }}-boringcache-build-observability.jsonl
 
       - name: Resolve BoringCache archive storage tags
@@ -444,6 +447,8 @@ jobs:
 
           echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
 
+          ./scripts/scope-boringcache-run.sh "$cache_scope"
+
           cat > ./run-go-phase.sh <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -486,6 +491,7 @@ jobs:
           GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_NO_GIT: "true"
 
       - name: Verify dependency archive restored
         if: inputs.strategy == 'boringcache'
@@ -678,7 +684,7 @@ jobs:
             --cache-import-status "${{ needs.seed-cache.outputs.cache_import_status }}" \
             --action-ref "${{ inputs.strategy == 'boringcache' && 'boringcache/one@6b7033721b37075b2138fd0c769bf088e0836ce6' || 'actions/cache@v5' }}" \
             --api-url "${{ inputs.strategy == 'boringcache' && 'https://api.boringcache.com' || '' }}" \
-            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run builds the current upstream commit as-is with the prior rolling cache available, exports the updated cache, and records that commit build only; warm follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: the cold build uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the benchmark profile in .boringcache.toml. Warm restores the module cache on a fresh runner and rebuilds the pinned source tree against the remote Go build cache populated by the cold build in read-only mode.' || 'Fresh lane: the cold build runs from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}" \
+            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run builds the current upstream commit as-is with the prior rolling cache available, exports the updated cache, and records that commit build only; warm follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: the cold build uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the run-scoped benchmark profile in .boringcache.toml. Warm restores that exact module cache on a fresh runner with trust-policy=restore and rebuilds the pinned source tree against the remote Go build cache populated by the cold build.' || 'Fresh lane: the cold build runs from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}" \
             "${cache_summary_args[@]}"
 
       - name: Upload benchmark artifacts
