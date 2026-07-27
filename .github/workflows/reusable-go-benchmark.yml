@@ -74,8 +74,8 @@ jobs:
       - name: Validate BoringCache secrets
         if: inputs.strategy == 'boringcache'
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
-          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
         run: |
           set -euo pipefail
           [[ -n "${BORINGCACHE_RESTORE_TOKEN}" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
@@ -141,7 +141,6 @@ jobs:
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Go
-        if: inputs.strategy == 'actions-cache'
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -150,21 +149,13 @@ jobs:
       - name: Configure boringcache/one
         if: inputs.strategy == 'boringcache'
         id: boringcache_one
-        uses: boringcache/one@v1
+        uses: boringcache/one@9721d419d2c78c0780963d297eb3f81f24641a27
         with:
-          setup: mise
+          setup: none
           cli-version: ${{ inputs.cli_version }}
           mode: go
-          tools: go@${{ env.GO_VERSION }}
-          workspace: ${{ env.BENCHMARK_WORKSPACE }}
-          cache-tag: ${{ steps.scope.outputs.cache_scope }}
           working-directory: ./upstream
-          proxy-no-git: 'true'
-          proxy-no-platform: 'true'
           cache-profiles: benchmark
-          cache-runtime: false
-          # Fresh caches are scoped to this run and attempt, and the warm job
-          # requires the cold job to publish them during pull-request validation.
           save-on-pull-request: ${{ inputs.cache_lane == 'fresh' }}
           fail-on-cache-error: ${{ inputs.cache_lane == 'fresh' }}
           verbose: true
@@ -177,8 +168,8 @@ jobs:
         env:
           GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
-          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
           BORINGCACHE_OBSERVABILITY_JSONL_PATH: ${{ runner.temp }}/${{ env.BENCHMARK_ID }}-boringcache-build-observability.jsonl
 
       - name: Resolve BoringCache archive storage tags
@@ -416,7 +407,7 @@ jobs:
       - name: Validate BoringCache restore secret
         if: inputs.strategy == 'boringcache'
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         run: |
           set -euo pipefail
           [[ -n "${BORINGCACHE_RESTORE_TOKEN}" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
@@ -468,7 +459,6 @@ jobs:
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
       - name: Setup Go
-        if: inputs.strategy == 'actions-cache'
         uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -476,24 +466,16 @@ jobs:
 
       - name: Configure boringcache/one
         if: inputs.strategy == 'boringcache'
-        uses: boringcache/one@v1
+        uses: boringcache/one@9721d419d2c78c0780963d297eb3f81f24641a27
         with:
-          setup: mise
+          setup: none
           cli-version: ${{ inputs.cli_version }}
           mode: go
-          tools: go@${{ env.GO_VERSION }}
-          workspace: ${{ env.BENCHMARK_WORKSPACE }}
-          cache-tag: ${{ steps.scope.outputs.cache_scope }}
           working-directory: ./upstream
           read-only: true
-          # The cold job publishes a run-scoped PR alias. This keeps the
-          # read-only warm lookup in that same scope without permitting writes.
           save-on-pull-request: ${{ inputs.cache_lane == 'fresh' }}
-          proxy-no-git: 'true'
-          proxy-no-platform: 'true'
           cache-profiles: benchmark
           fail-on-cache-miss: true
-          cache-runtime: false
           verbose: true
           diagnostics: verbose
           diagnostics-log-lines: 160
@@ -504,7 +486,7 @@ jobs:
         env:
           GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
 
       - name: Verify dependency archive restored
         if: inputs.strategy == 'boringcache'
@@ -573,17 +555,12 @@ jobs:
           fetch-depth: 1
           submodules: false
 
-      - name: Install BoringCache CLI with boringcache/one
+      - name: Install BoringCache CLI
         if: inputs.strategy == 'boringcache'
-        uses: boringcache/one@v1
-        with:
-          setup: none
-          cli-version: ${{ inputs.cli_version }}
-          mode: archive
-          workspace: ${{ env.BENCHMARK_WORKSPACE }}
-          cli-platform: linux-amd64
-          cache-runtime: false
-
+        run: >-
+          ./scripts/install-boringcache-cli.sh
+          "${{ inputs.cli_version }}"
+          "linux-amd64"
       - name: Download scenario timing artifacts
         if: ${{ inputs.cache_lane != 'rolling' }}
         uses: actions/download-artifact@v8
@@ -634,7 +611,7 @@ jobs:
         if: inputs.strategy == 'boringcache'
         id: bc_cache_size
         env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN || secrets.BORINGCACHE_API_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         run: |
           tags_csv="${{ needs.seed-cache.outputs.tags_csv }}"
           mkdir -p benchmark-storage
@@ -676,7 +653,7 @@ jobs:
       - name: Write benchmark artifacts
         id: artifact_files
         env:
-          BORINGCACHE_API_TOKEN: ${{ secrets.BORINGCACHE_API_TOKEN || secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         run: |
           cache_summary_args=()
           if [[ -s benchmark-session-summary/benchmark-session-summary.json ]]; then
@@ -700,7 +677,7 @@ jobs:
             --mode go \
             --adapter gocache \
             --cache-import-status "${{ needs.seed-cache.outputs.cache_import_status }}" \
-            --action-ref "${{ inputs.strategy == 'boringcache' && 'boringcache/one@v1' || 'actions/cache@v5' }}" \
+            --action-ref "${{ inputs.strategy == 'boringcache' && 'boringcache/one@9721d419d2c78c0780963d297eb3f81f24641a27' || 'actions/cache@v5' }}" \
             --api-url "${{ inputs.strategy == 'boringcache' && 'https://api.boringcache.com' || '' }}" \
             --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run builds the current upstream commit as-is with the prior rolling cache available, exports the updated cache, and records that commit build only; warm follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: the cold build uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the benchmark profile in .boringcache.toml. Warm restores the module cache on a fresh runner and rebuilds the pinned source tree against the remote Go build cache populated by the cold build in read-only mode.' || 'Fresh lane: the cold build runs from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}" \
             "${cache_summary_args[@]}"
