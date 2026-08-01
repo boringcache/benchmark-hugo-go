@@ -2,7 +2,7 @@
 
 Public Hugo Go benchmark runner for BoringCache vs GitHub Actions cache.
 
-Stable BoringCache workflows pin `boringcache/one` `v1.15.0` by immutable
+Stable BoringCache workflows pin `boringcache/one` `v1.16.3` by immutable
 commit; canary dispatches may select an exact immutable CLI tag.
 
 This repo exists separately from [`boringcache/benchmarks`](https://github.com/boringcache/benchmarks) so the benchmark keeps:
