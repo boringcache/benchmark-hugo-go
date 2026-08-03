@@ -1,53 +1,5 @@
-# benchmark-hugo-go
+# BoringCache Hugo Go benchmark
 
-Public Hugo Go benchmark runner for BoringCache vs GitHub Actions cache.
+This repository contains the BoringCache benchmark for Hugo Go.
 
-Stable BoringCache workflows pin `boringcache/one` `v1.16.4` by immutable
-commit; canary dispatches may select an exact immutable CLI tag.
-
-This repo exists separately from [`boringcache/benchmarks`](https://github.com/boringcache/benchmarks) so the benchmark keeps:
-
-- one pinned upstream source commit
-- isolated GitHub Actions cache usage
-- one per-repo BoringCache workspace name: `boringcache/benchmark-hugo-go`
-- independent workflow history plus upstream-sync-driven benchmark runs and manual dispatches
-
-## Source Model
-
-- Upstream source lives in the pinned `upstream/` submodule.
-
-Pinned upstream source:
-
-- see committed `upstream/` submodule on `main`
-
-## What It Measures
-
-Fresh lane runs a no-prior-cache cold build plus one warm rerun for each backend:
-
-- `cold`
-- `warm1`
-
-Rolling lane records the upstream commit build as-is after each upstream sync against the prior rolling cache and intentionally skips `warm1`.
-
-The story this benchmark is meant to show is:
-
-- speed on fresh cold and warm paths
-- commit-build behavior on normal upstream syncs in the rolling lane
-- storage footprint in each backend
-- cache reuse through BoringCache's native Go `GOCACHEPROG` proxy path
-
-## Cache Shape
-
-BoringCache uses `boringcache/one` with `mode: go` for the native Go build-cache path and archives only `go-mod-cache` so module downloads stay comparable on fresh runners.
-
-GitHub Actions cache stores:
-
-- `GOMODCACHE`
-- `GOCACHE`
-
-## Token Model
-
-This repo uses split BoringCache tokens as the standard CI shape:
-
-- `BORINGCACHE_RESTORE_TOKEN` for read-only restore and proxy access
-- `BORINGCACHE_SAVE_TOKEN` for trusted write paths
+Benchmark workflows are in [`.github/workflows/`](.github/workflows/), with configuration in [`.boringcache.toml`](.boringcache.toml).
