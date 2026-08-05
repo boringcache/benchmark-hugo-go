@@ -5,13 +5,3 @@ tag = "hugo-go-local"
 no-platform = true
 no-git = true
 command = ["go", "build", "-trimpath", "-buildvcs=false", "-o", "../benchmark-bin/hugo", "."]
-
-# Go remote-cache benchmark. boringcache/one mode=go owns the GOCACHEPROG
-# build-output cache, so the benchmark profile archives only the module
-# download cache that the remote adapter does not cover.
-
-[entries.go-mod-cache]
-tag = "hugo-go-mod-cache-local"
-
-[profiles.benchmark]
-entries = ["go-mod-cache"]

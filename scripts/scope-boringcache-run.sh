@@ -10,16 +10,11 @@ if [[ ! "$scope" =~ ^[a-z0-9][a-z0-9._-]+$ ]]; then
 fi
 
 config_path="${repo_root}/.boringcache.toml"
-for mapping in \
-  "hugo-go-local:${scope}" \
-  "hugo-go-mod-cache-local:${scope}-go-mod-cache"; do
-  old_tag="${mapping%%:*}"
-  new_tag="${mapping#*:}"
-  if ! grep -Fq "tag = \"${old_tag}\"" "$config_path"; then
-    echo "Missing expected local tag in ${config_path}: ${old_tag}" >&2
-    exit 1
-  fi
-  sed -i "s/tag = \"${old_tag}\"/tag = \"${new_tag}\"/" "$config_path"
-done
+old_tag="hugo-go-local"
+if ! grep -Fq "tag = \"${old_tag}\"" "$config_path"; then
+  echo "Missing expected local tag in ${config_path}: ${old_tag}" >&2
+  exit 1
+fi
+sed -i "s/tag = \"${old_tag}\"/tag = \"${scope}\"/" "$config_path"
 
-echo "Scoped BoringCache tags to ${scope}."
+echo "Scoped the BoringCache Go tag to ${scope}."
