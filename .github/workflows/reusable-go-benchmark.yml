@@ -6,9 +6,6 @@ on:
       benchmark_id:
         required: true
         type: string
-      project_repo:
-        required: true
-        type: string
       strategy:
         required: true
         type: string
@@ -17,52 +14,31 @@ on:
         type: string
         default: fresh
       cli_version:
-        description: "Optional BoringCache CLI release tag for canary runs."
-        required: false
-        type: string
-        default: ""
-      benchmark_workspace:
+        description: "Optional exact BoringCache CLI release tag for canary runs."
         required: false
         type: string
         default: ""
       go_version:
         required: true
         type: string
-      build_command:
-        required: false
-        type: string
-        default: go build -trimpath -buildvcs=false ./...
 
 env:
-  PROJECT_REPO: ${{ inputs.project_repo }}
   BENCHMARK_ID: ${{ inputs.benchmark_id }}
-  BENCHMARK_WORKSPACE: ${{ inputs.benchmark_workspace || github.repository }}
-  GO_VERSION: ${{ inputs.go_version }}
-  BUILD_COMMAND: ${{ inputs.build_command }}
   CACHE_LANE: ${{ inputs.cache_lane }}
-  GO_MODULE_CACHE: ${{ github.workspace }}/upstream/.go/pkg/mod
-  GO_BUILD_CACHE: ${{ github.workspace }}/upstream/.go/build-cache
+  GO_MODULE_CACHE: ${{ github.workspace }}/.go/pkg/mod
+  GO_BUILD_CACHE: ${{ github.workspace }}/.go/build-cache
 
 jobs:
-  seed-cache:
+  publish:
     name: ${{ inputs.cache_lane == 'rolling' && 'Commit' || 'Cold' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 240
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 120
     outputs:
-      cold_seconds: ${{ steps.cold_baseline_build.outputs.seconds }}
-      cold_build_seconds: ${{ steps.cold_baseline_build.outputs.build_seconds }}
-      scope_started_at: ${{ steps.scope.outputs.scope_started_at }}
-      tags_csv: ${{ steps.boringcache_storage_tags.outputs.tags_csv }}
-      seed_cache_key: ${{ steps.seed_cache_key.outputs.key }}
-      cache_key_prefix: ${{ steps.scope.outputs.cache_key_prefix }}
+      cache_key: ${{ steps.scope.outputs.cache_key }}
       cache_scope: ${{ steps.scope.outputs.cache_scope }}
-      cache_import_status: ${{ steps.cache_import_status.outputs.status }}
     steps:
       - name: Validate benchmark strategy
         run: |
-          set -euo pipefail
           case "${{ inputs.strategy }}" in
             actions-cache|boringcache) ;;
             *)
@@ -71,630 +47,185 @@ jobs:
               ;;
           esac
 
-      - name: Validate BoringCache secrets
-        if: inputs.strategy == 'boringcache'
-        env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-          BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
-        run: |
-          set -euo pipefail
-          [[ -n "${BORINGCACHE_RESTORE_TOKEN}" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
-          [[ -n "${BORINGCACHE_SAVE_TOKEN}" ]] || { echo "Missing BoringCache save token" >&2; exit 1; }
-
-      - name: Checkout benchmark repo
+      - name: Checkout benchmark repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
           submodules: false
 
-      - name: Checkout pinned upstream submodule shallowly
+      - name: Checkout pinned Hugo source
         run: |
-          set -euo pipefail
           git submodule sync --recursive
           git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 4 upstream
 
-      - name: Prepare base benchmark source tree
+      - name: Prepare clean Hugo source
         run: ./scripts/prepare-source.sh base
 
-      - name: Prepare benchmark scope and helpers
+      - name: Select the cache cohort
         id: scope
         run: |
           set -euo pipefail
 
-          scope_started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           ref_slug="$(printf '%s' "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9._-' '-')"
           ref_slug="${ref_slug#-}"
           ref_slug="${ref_slug%-}"
           ref_slug="${ref_slug:-main}"
-          cache_key_namespace="ac"
-
           if [[ "$CACHE_LANE" == "rolling" ]]; then
             cache_scope="${BENCHMARK_ID}-rolling-${ref_slug}"
-            cache_key_prefix="${cache_key_namespace}-${BENCHMARK_ID}-rolling-${ref_slug}"
-            cache_key_primary="${cache_key_prefix}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-build1"
-            cache_key_fallback="${cache_key_prefix}-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}-build2"
           else
             cache_scope="${BENCHMARK_ID}-run-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
-            cache_key_prefix="${cache_key_namespace}-${cache_scope}"
-            cache_key_primary="${cache_key_namespace}-${cache_scope}-build1"
-            cache_key_fallback="${cache_key_namespace}-${cache_scope}-build2"
           fi
 
-          echo "scope_started_at=${scope_started_at}" >> "$GITHUB_OUTPUT"
-          echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
-          echo "cache_key_prefix=${cache_key_prefix}" >> "$GITHUB_OUTPUT"
-          echo "cache_key_primary=${cache_key_primary}" >> "$GITHUB_OUTPUT"
-          echo "cache_key_fallback=${cache_key_fallback}" >> "$GITHUB_OUTPUT"
-
           ./scripts/scope-boringcache-run.sh "$cache_scope"
+          source_sha="$(git rev-parse HEAD:upstream)"
+          echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
+          echo "cache_key=go-${cache_scope}-${source_sha}" >> "$GITHUB_OUTPUT"
 
-          cat > ./run-go-phase.sh <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-
-          mkdir -p "${GOMODCACHE}" "${GOCACHE}"
-          cd upstream
-          eval "$BUILD_COMMAND"
-          SH
-          chmod +x ./run-go-phase.sh
-
-      - name: Start build timing
-        id: seed_timing_start
-        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Go
+      - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: ${{ env.GO_VERSION }}
+          go-version: ${{ inputs.go_version }}
           cache: false
 
-      - name: Configure boringcache/one
-        if: inputs.strategy == 'boringcache'
-        id: boringcache_one
-        uses: boringcache/one@bf810e34331db84f9f11930e83b8813b5ad31ba1 # v1.16.4
+      - name: Restore the GitHub Actions cache
+        if: inputs.strategy == 'actions-cache'
+        uses: actions/cache@v5
         with:
-          setup: none
+          path: |
+            ${{ env.GO_MODULE_CACHE }}
+            ${{ env.GO_BUILD_CACHE }}
+          key: ${{ steps.scope.outputs.cache_key }}
+          restore-keys: |
+            go-${{ steps.scope.outputs.cache_scope }}-
+
+      - name: Build Hugo with the GitHub Actions cache
+        if: inputs.strategy == 'actions-cache'
+        env:
+          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
+          GOCACHE: ${{ env.GO_BUILD_CACHE }}
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-bin "$GOMODCACHE" "$GOCACHE"
+          cd upstream
+          go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
+
+      - name: Build Hugo through BoringCache One
+        if: inputs.strategy == 'boringcache'
+        id: boringcache
+        uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
+        with:
           cli-version: ${{ inputs.cli_version }}
+          setup: none
           mode: go
           trust-policy: publish
-          working-directory: ./upstream
+          working-directory: upstream
           cache-profiles: benchmark
-          fail-on-cache-error: ${{ inputs.cache_lane == 'fresh' }}
-          verbose: true
-          diagnostics: verbose
-          diagnostics-log-lines: 160
-          metadata-hints: |
-            benchmark=${{ env.BENCHMARK_ID }}
-            phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'cold' }}
-            tool=gocache
+          fail-on-cache-error: true
+          metadata-hints: phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'fresh-cold' }}
         env:
           GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
           BORINGCACHE_NO_GIT: "true"
-          BORINGCACHE_OBSERVABILITY_JSONL_PATH: ${{ runner.temp }}/${{ env.BENCHMARK_ID }}-boringcache-build-observability.jsonl
 
-      - name: Resolve BoringCache archive storage tags
+      - name: Verify the Hugo build
+        run: |
+          set -euo pipefail
+          test -x benchmark-bin/hugo
+          ./benchmark-bin/hugo version
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+
+      - name: Retain product evidence
         if: inputs.strategy == 'boringcache'
-        id: boringcache_storage_tags
-        env:
-          RESOLVED_TAGS: ${{ steps.boringcache_one.outputs.resolved-tags }}
-          PROXY_TAG: ${{ steps.scope.outputs.cache_scope }}
-        run: |
-          set -euo pipefail
-          storage_tags=()
-          IFS=',' read -ra candidates <<<"$RESOLVED_TAGS"
-          for tag in "${candidates[@]}"; do
-            [[ -n "$tag" && "$tag" != "$PROXY_TAG" ]] || continue
-            storage_tags+=("$tag")
-          done
-          if (( ${#storage_tags[@]} == 0 )); then
-            echo "No archive storage tags were resolved by boringcache/one" >&2
-            exit 1
-          fi
-          tags_csv="$(IFS=,; echo "${storage_tags[*]}")"
-          echo "tags_csv=${tags_csv}" >> "$GITHUB_OUTPUT"
-
-      - name: Purge GitHub Actions cache keys
-        if: inputs.strategy == 'actions-cache' && inputs.cache_lane != 'rolling'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          for key_prefix in "${{ steps.scope.outputs.cache_key_primary }}" "${{ steps.scope.outputs.cache_key_fallback }}"; do
-            page=1
-            while true; do
-              response="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/caches?per_page=100&page=${page}&key=${key_prefix}" 2>/dev/null || true)"
-              if [[ -z "$response" ]] || ! jq -e '.actions_caches | type == "array"' <<<"$response" >/dev/null 2>&1; then
-                break
-              fi
-              mapfile -t cache_ids < <(jq -r '.actions_caches[].id' <<<"$response")
-              for cache_id in "${cache_ids[@]}"; do
-                gh api -X DELETE "/repos/${GITHUB_REPOSITORY}/actions/caches/${cache_id}" >/dev/null 2>&1 || true
-              done
-              count="$(jq '.actions_caches | length' <<<"$response")"
-              if [[ "$count" -lt 100 ]]; then
-                break
-              fi
-              page=$((page + 1))
-            done
-          done
-
-      - name: Prepare GitHub Actions Cache write probe
-        if: inputs.strategy == 'actions-cache'
-        run: |
-          set -euo pipefail
-          mkdir -p .bench-cache-probe
-          printf '%s\n' "probe-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(date +%s)" > .bench-cache-probe/probe.txt
-
-      - name: Verify GitHub Actions Cache write access
-        if: inputs.strategy == 'actions-cache'
-        id: cache_write_probe
-        continue-on-error: true
-        uses: actions/cache/save@v5
-        with:
-          path: |
-            .bench-cache-probe
-          key: ac-${{ env.BENCHMARK_ID }}-write-probe-r${{ github.run_id }}-a${{ github.run_attempt }}
-
-      - name: Fail early if GitHub Actions Cache is read-only
-        if: inputs.strategy == 'actions-cache' && steps.cache_write_probe.outcome != 'success'
-        run: |
-          echo "GitHub Actions Cache write probe failed (likely read-only budget/spending cap)." >&2
-          echo "Cannot produce reliable GitHub Actions Cache benchmark results until cache writes are enabled." >&2
-          exit 1
-
-      - name: Restore rolling actions/cache history
-        if: inputs.strategy == 'actions-cache' && inputs.cache_lane == 'rolling'
-        id: restore_rolling_ac
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            ${{ env.GO_MODULE_CACHE }}
-            ${{ env.GO_BUILD_CACHE }}
-          key: ${{ steps.scope.outputs.cache_key_primary }}
-          restore-keys: |
-            ${{ steps.scope.outputs.cache_key_prefix }}-
-
-      - name: Resolve rolling cache import status
-        id: cache_import_status
-        env:
-          RESTORE_CACHE_MATCHED_KEY: ${{ steps.restore_rolling_ac.outputs.cache-matched-key }}
-        run: |
-          set -euo pipefail
-          status=""
-          if [[ "$CACHE_LANE" == "rolling" && "${{ inputs.strategy }}" == "actions-cache" ]]; then
-            if [[ -n "$RESTORE_CACHE_MATCHED_KEY" ]]; then
-              status="ok"
-            else
-              status="actions_cache_miss"
-            fi
-          fi
-          echo "status=${status}" >> "$GITHUB_OUTPUT"
-
-      - name: ${{ inputs.cache_lane == 'rolling' && 'Run rolling commit build' || 'Run fresh cold build' }}
-        id: cold_baseline_build
-        env:
-          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
-          GOCACHE: ${{ env.GO_BUILD_CACHE }}
-        run: |
-          set -euo pipefail
-          if [[ "$CACHE_LANE" != "rolling" ]]; then
-            if [[ "${{ inputs.strategy }}" == "actions-cache" ]]; then
-              rm -rf "$GOMODCACHE" "$GOCACHE"
-            else
-              # BoringCache restores the module cache via the benchmark
-              # profile; clear only the build cache for a fresh cold sample.
-              rm -rf "$GOCACHE"
-            fi
-          fi
-          mkdir -p "$GOMODCACHE" "$GOCACHE"
-
-          phase_start="${{ steps.seed_timing_start.outputs.started_at }}"
-          start="$(date +%s)"
-          ./run-go-phase.sh cold
-          end="$(date +%s)"
-          echo "seconds=$((end - phase_start))" >> "$GITHUB_OUTPUT"
-          echo "build_seconds=$((end - start))" >> "$GITHUB_OUTPUT"
-
-      - name: Capture BoringCache session summary
-        if: inputs.strategy == 'boringcache' && always()
-        env:
-          BORINGCACHE_OBSERVABILITY_JSONL_PATH: ${{ runner.temp }}/${{ env.BENCHMARK_ID }}-boringcache-build-observability.jsonl
-          BORINGCACHE_PROXY_PORT: ${{ steps.boringcache_one.outputs.proxy-port }}
-        run: |
-          set -euo pipefail
-          mkdir -p benchmark-session-summary
-
-          status_json=""
-          for _ in $(seq 1 60); do
-            status_json="$(curl --fail --silent --show-error --max-time 2 \
-              "http://127.0.0.1:${BORINGCACHE_PROXY_PORT}/_boringcache/status" || true)"
-            if jq -e '
-              .publish_settled == true and
-              (.session_summary | type == "object") and
-              (.session_summary.schema == "cache-session-v2")
-            ' <<<"$status_json" >/dev/null 2>&1; then
-              jq -c '.session_summary' <<<"$status_json" > benchmark-session-summary/benchmark-session-summary.json
-              break
-            fi
-            sleep 0.5
-          done
-
-          if [[ ! -s benchmark-session-summary/benchmark-session-summary.json && -s "$BORINGCACHE_OBSERVABILITY_JSONL_PATH" ]]; then
-            jq -c 'select(.operation == "cache_session_summary") | .summary // .details // .' "$BORINGCACHE_OBSERVABILITY_JSONL_PATH" 2>/dev/null | tail -n 1 > benchmark-session-summary/benchmark-session-summary.json || true
-          fi
-          if [[ ! -s benchmark-session-summary/benchmark-session-summary.json ]]; then
-            echo "BoringCache proxy did not produce a settled cache session summary" >&2
-            if [[ -n "$status_json" ]]; then
-              jq '{phase, publish_state, publish_settled}' <<<"$status_json" >&2 || true
-            fi
-            exit 1
-          fi
-
-      - name: Upload BoringCache session summary
-        if: inputs.strategy == 'boringcache' && always()
         uses: actions/upload-artifact@v6
         with:
-          name: benchmark-session-summary-${{ env.BENCHMARK_ID }}-boringcache-${{ inputs.cache_lane }}
-          path: benchmark-session-summary/benchmark-session-summary.json
+          name: hugo-go-${{ inputs.cache_lane }}-publish
+          path: ${{ steps.boringcache.outputs.evidence-path }}
           if-no-files-found: error
 
-      - name: Save build cache (primary key)
-        if: inputs.strategy == 'actions-cache'
-        id: save_seed_primary
-        continue-on-error: true
-        uses: actions/cache/save@v5
-        with:
-          path: |
-            ${{ env.GO_MODULE_CACHE }}
-            ${{ env.GO_BUILD_CACHE }}
-          key: ${{ steps.scope.outputs.cache_key_primary }}
-
-      - name: Save build cache (fallback key)
-        if: inputs.strategy == 'actions-cache' && steps.save_seed_primary.outcome != 'success'
-        id: save_seed_fallback
-        continue-on-error: true
-        uses: actions/cache/save@v5
-        with:
-          path: |
-            ${{ env.GO_MODULE_CACHE }}
-            ${{ env.GO_BUILD_CACHE }}
-          key: ${{ steps.scope.outputs.cache_key_fallback }}
-
-      - name: Resolve build cache key
-        if: inputs.strategy == 'actions-cache'
-        id: seed_cache_key
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          primary="${{ steps.scope.outputs.cache_key_primary }}"
-          fallback="${{ steps.scope.outputs.cache_key_fallback }}"
-          key=""
-
-          for candidate in "$primary" "$fallback"; do
-            for _ in $(seq 1 30); do
-              response="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/caches?per_page=100&key=${candidate}" 2>/dev/null || true)"
-              if [[ -n "$response" ]] && jq -e '.actions_caches | type == "array"' <<<"$response" >/dev/null 2>&1; then
-                matches="$(jq '.actions_caches | length' <<<"$response")"
-                if [[ "$matches" -gt 0 ]]; then
-                  key="$candidate"
-                  break 2
-                fi
-              fi
-              sleep 2
-            done
-          done
-
-          if [[ -z "$key" ]]; then
-            echo "Failed to verify build cache key in GitHub Actions Cache API (likely cache save/read-only budget issue)." >&2
-            echo "Primary save outcome: ${{ steps.save_seed_primary.outcome }}" >&2
-            echo "Fallback save outcome: ${{ steps.save_seed_fallback.outcome }}" >&2
-            exit 1
-          fi
-
-          echo "key=${key}" >> "$GITHUB_OUTPUT"
-          echo "Using build cache key: ${key}"
-
-  scenario-builds:
+  restore:
     name: Warm
-    needs: seed-cache
-    if: ${{ inputs.cache_lane != 'rolling' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Validate BoringCache restore secret
-        if: inputs.strategy == 'boringcache'
-        env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-        run: |
-          set -euo pipefail
-          [[ -n "${BORINGCACHE_RESTORE_TOKEN}" ]] || { echo "Missing BoringCache restore token" >&2; exit 1; }
-
-      - name: Checkout benchmark repo
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 1
-          submodules: false
-
-      - name: Checkout pinned upstream submodule shallowly
-        run: |
-          set -euo pipefail
-          git submodule sync --recursive
-          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 4 upstream
-
-      - name: Prepare scenario source tree
-        run: ./scripts/prepare-source.sh warm1
-
-      - name: Prepare benchmark scope and helpers
-        id: scope
-        run: |
-          set -euo pipefail
-
-          ref_slug="$(printf '%s' "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9._-' '-')"
-          ref_slug="${ref_slug#-}"
-          ref_slug="${ref_slug%-}"
-          ref_slug="${ref_slug:-main}"
-          if [[ "$CACHE_LANE" == "rolling" ]]; then
-            cache_scope="${BENCHMARK_ID}-rolling-${ref_slug}"
-          else
-            cache_scope="${BENCHMARK_ID}-run-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
-          fi
-
-          echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
-
-          ./scripts/scope-boringcache-run.sh "$cache_scope"
-
-          cat > ./run-go-phase.sh <<'SH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-
-          mkdir -p "${GOMODCACHE}" "${GOCACHE}"
-          cd upstream
-          eval "$BUILD_COMMAND"
-          SH
-          chmod +x ./run-go-phase.sh
-
-      - name: Start scenario timing
-        id: scenario_timing_start
-        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-
-      - name: Configure boringcache/one
-        if: inputs.strategy == 'boringcache'
-        uses: boringcache/one@bf810e34331db84f9f11930e83b8813b5ad31ba1 # v1.16.4
-        with:
-          setup: none
-          cli-version: ${{ inputs.cli_version }}
-          mode: go
-          trust-policy: restore
-          working-directory: ./upstream
-          cache-profiles: benchmark
-          fail-on-cache-miss: true
-          verbose: true
-          diagnostics: verbose
-          diagnostics-log-lines: 160
-          metadata-hints: |
-            benchmark=${{ env.BENCHMARK_ID }}
-            phase=warm
-            tool=gocache
-        env:
-          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
-          GOCACHE: ${{ env.GO_BUILD_CACHE }}
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-          BORINGCACHE_NO_GIT: "true"
-
-      - name: Verify dependency archive restored
-        if: inputs.strategy == 'boringcache'
-        env:
-          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
-        run: |
-          set -euo pipefail
-          if [[ ! -d "$GOMODCACHE" ]] || [[ -z "$(ls -A "$GOMODCACHE" 2>/dev/null)" ]]; then
-            echo "Missing or empty GOMODCACHE ($GOMODCACHE) after BoringCache restore" >&2
-            exit 1
-          fi
-
-      - name: Restore cache from fresh cold build
-        if: inputs.strategy == 'actions-cache'
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            ${{ env.GO_MODULE_CACHE }}
-            ${{ env.GO_BUILD_CACHE }}
-          key: ${{ needs.seed-cache.outputs.seed_cache_key }}
-          fail-on-cache-miss: true
-
-      - name: Run scenario build
-        id: phase_build
-        env:
-          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
-          GOCACHE: ${{ env.GO_BUILD_CACHE }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$GOMODCACHE" "$GOCACHE"
-
-          phase_start="${{ steps.scenario_timing_start.outputs.started_at }}"
-          start="$(date +%s)"
-          ./run-go-phase.sh warm
-          end="$(date +%s)"
-          echo "seconds=$((end - phase_start))" >> "$GITHUB_OUTPUT"
-          echo "build_seconds=$((end - start))" >> "$GITHUB_OUTPUT"
-
-      - name: Persist scenario timing artifact
-        run: |
-          set -euo pipefail
-          mkdir -p benchmark-phase
-          cat > "benchmark-phase/warm1.env" <<EOF
-          phase=warm1
-          seconds=${{ steps.phase_build.outputs.seconds }}
-          build_seconds=${{ steps.phase_build.outputs.build_seconds }}
-          EOF
-
-      - name: Upload scenario timing artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: benchmark-phase-${{ env.BENCHMARK_ID }}-${{ inputs.strategy }}-warm
-          path: benchmark-phase/warm1.env
-          if-no-files-found: error
-
-  finalize-benchmark:
-    name: Report
-    needs: [seed-cache, scenario-builds]
-    if: ${{ always() && needs.seed-cache.result == 'success' && (needs.scenario-builds.result == 'success' || needs.scenario-builds.result == 'skipped') }}
+    needs: publish
+    if: inputs.cache_lane == 'fresh'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - name: Checkout benchmark repo
+      - name: Checkout benchmark repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
           submodules: false
 
-      - name: Install BoringCache CLI
-        if: inputs.strategy == 'boringcache'
-        run: >-
-          ./scripts/install-boringcache-cli.sh
-          "${{ inputs.cli_version }}"
-          "linux-amd64"
-      - name: Download scenario timing artifacts
-        if: ${{ inputs.cache_lane != 'rolling' }}
-        uses: actions/download-artifact@v8
-        with:
-          pattern: benchmark-phase-${{ env.BENCHMARK_ID }}-${{ inputs.strategy }}-*
-          path: benchmark-phase
-          merge-multiple: true
+      - name: Checkout pinned Hugo source
+        run: |
+          git submodule sync --recursive
+          git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 4 upstream
 
-      - name: Download BoringCache session summary
-        if: inputs.strategy == 'boringcache'
-        uses: actions/download-artifact@v8
-        continue-on-error: true
-        with:
-          name: benchmark-session-summary-${{ env.BENCHMARK_ID }}-boringcache-${{ inputs.cache_lane }}
-          path: benchmark-session-summary
+      - name: Prepare clean Hugo source
+        run: ./scripts/prepare-source.sh warm1
 
-      - name: Collect scenario timings
-        if: ${{ inputs.cache_lane != 'rolling' }}
-        id: timings
+      - name: Select the published cache cohort
+        run: ./scripts/scope-boringcache-run.sh "${{ needs.publish.outputs.cache_scope }}"
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ inputs.go_version }}
+          cache: false
+
+      - name: Restore the exact GitHub Actions cache
+        if: inputs.strategy == 'actions-cache'
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ env.GO_MODULE_CACHE }}
+            ${{ env.GO_BUILD_CACHE }}
+          key: ${{ needs.publish.outputs.cache_key }}
+          fail-on-cache-miss: true
+
+      - name: Build Hugo with the restored GitHub Actions cache
+        if: inputs.strategy == 'actions-cache'
+        env:
+          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
+          GOCACHE: ${{ env.GO_BUILD_CACHE }}
         run: |
           set -euo pipefail
-          parse_phase() {
-            local phase="$1"
-            local file="benchmark-phase/${phase}.env"
-            if [[ ! -f "$file" ]]; then
-              echo "Missing timing artifact for phase ${phase}" >&2
-              ls -R benchmark-phase || true
-              exit 1
-            fi
-            local seconds
-            seconds="$(grep "^seconds=" "$file" | head -n1 | cut -d= -f2-)"
-            if [[ -z "${seconds}" ]]; then
-              echo "Timing artifact for phase ${phase} has empty seconds" >&2
-              cat "$file" >&2
-              exit 1
-            fi
-            local key="${phase//-/_}"
-            echo "${key}_seconds=${seconds}" >> "$GITHUB_OUTPUT"
-            local build_seconds
-            build_seconds="$(grep "^build_seconds=" "$file" | head -n1 | cut -d= -f2- || true)"
-            if [[ -n "${build_seconds}" ]]; then
-              echo "${key}_build_seconds=${build_seconds}" >> "$GITHUB_OUTPUT"
-            fi
-          }
-          parse_phase warm1
+          mkdir -p benchmark-bin "$GOMODCACHE" "$GOCACHE"
+          cd upstream
+          go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
 
-      - name: Measure BoringCache storage usage
+      - name: Restore and build Hugo through BoringCache One
         if: inputs.strategy == 'boringcache'
-        id: bc_cache_size
+        id: boringcache
+        uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
+        with:
+          cli-version: ${{ inputs.cli_version }}
+          setup: none
+          mode: go
+          trust-policy: restore
+          working-directory: upstream
+          cache-profiles: benchmark
+          fail-on-cache-miss: true
+          fail-on-cache-error: true
+          metadata-hints: phase=fresh-warm
         env:
+          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
+          GOCACHE: ${{ env.GO_BUILD_CACHE }}
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+          BORINGCACHE_NO_GIT: "true"
+
+      - name: Verify the restored Hugo build
         run: |
-          tags_csv="${{ needs.seed-cache.outputs.tags_csv }}"
-          mkdir -p benchmark-storage
-          missing_tags_path="benchmark-storage/missing-tags.txt"
-          breakdown_path="benchmark-storage/boringcache-storage-breakdown.json"
-          bytes="$(BORINGCACHE_STORAGE_MISSING_PATH="$missing_tags_path" BORINGCACHE_STORAGE_BREAKDOWN_PATH="$breakdown_path" ./scripts/sum-boringcache-check-sizes.sh "$BENCHMARK_WORKSPACE" "$tags_csv")"
-          echo "bytes=${bytes}" >> "$GITHUB_OUTPUT"
-          echo "breakdown_path=${breakdown_path}" >> "$GITHUB_OUTPUT"
-          if [[ -s "$missing_tags_path" ]]; then
-            missing_tags="$(paste -sd, "$missing_tags_path")"
-            echo "note=partial measurement; missing tags: ${missing_tags}" >> "$GITHUB_OUTPUT"
-            {
-              echo "### BoringCache storage measurement"
-              echo ""
-              echo "Partial measurement: the run saved/restored enough to continue, but these expected tags were not found:"
-              sed 's/^/- `/' "$missing_tags_path" | sed 's/$/`/'
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "note=all expected tags resolved" >> "$GITHUB_OUTPUT"
-          fi
+          set -euo pipefail
+          test -x benchmark-bin/hugo
+          ./benchmark-bin/hugo version
+          test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
-      - name: Measure GitHub Actions Cache storage usage
-        if: inputs.strategy == 'actions-cache'
-        id: ac_cache_size
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          args=("${{ inputs.cache_lane == 'rolling' && needs.seed-cache.outputs.cache_key_prefix || needs.seed-cache.outputs.seed_cache_key }}")
-          if [[ -n "${{ inputs.cache_lane == 'rolling' && '' || needs.seed-cache.outputs.scope_started_at }}" ]]; then
-            args+=("${{ inputs.cache_lane == 'rolling' && '' || needs.seed-cache.outputs.scope_started_at }}")
-          fi
-          bytes="$(./scripts/sum-gha-cache-by-key.sh "${args[@]}")"
-          echo "bytes=${bytes}" >> "$GITHUB_OUTPUT"
-
-      - name: Capture committed upstream ref
-        id: upstream_ref
-        run: echo "sha=$(git rev-parse HEAD:upstream)" >> "$GITHUB_OUTPUT"
-
-      - name: Write benchmark artifacts
-        id: artifact_files
-        env:
-          BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
-        run: |
-          cache_summary_args=()
-          if [[ -s benchmark-session-summary/benchmark-session-summary.json ]]; then
-            cache_summary_args=(--cache-session-summary-json benchmark-session-summary/benchmark-session-summary.json)
-          fi
-
-          ./scripts/write-benchmark-artifacts.sh \
-            --benchmark "$BENCHMARK_ID" \
-            --strategy "${{ inputs.strategy }}" \
-            --lane "$CACHE_LANE" \
-            --project-repo "$PROJECT_REPO" \
-            --project-ref "${{ steps.upstream_ref.outputs.sha }}" \
-            --cold-seconds "${{ needs.seed-cache.outputs.cold_seconds }}" \
-            --cold-build-seconds "${{ needs.seed-cache.outputs.cold_build_seconds }}" \
-            --warm1-seconds "${{ inputs.cache_lane == 'rolling' && '' || steps.timings.outputs.warm1_seconds }}" \
-            --warm1-build-seconds "${{ inputs.cache_lane == 'rolling' && '' || steps.timings.outputs.warm1_build_seconds }}" \
-            --cache-storage-bytes "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.bytes || steps.ac_cache_size.outputs.bytes }}" \
-            --cache-storage-source "${{ inputs.strategy == 'boringcache' && 'boringcache-check' || 'github-actions-cache-api' }}" \
-            --cache-storage-note "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.note || '' }}" \
-            --storage-breakdown-json "${{ inputs.strategy == 'boringcache' && steps.bc_cache_size.outputs.breakdown_path || '' }}" \
-            --mode go \
-            --adapter gocache \
-            --cache-import-status "${{ needs.seed-cache.outputs.cache_import_status }}" \
-            --action-ref "${{ inputs.strategy == 'boringcache' && 'boringcache/one@bf810e34331db84f9f11930e83b8813b5ad31ba1' || 'actions/cache@v5' }}" \
-            --api-url "${{ inputs.strategy == 'boringcache' && 'https://api.boringcache.com' || '' }}" \
-            --hit-behavior-note "${{ inputs.cache_lane == 'rolling' && 'Rolling lane: this run builds the current upstream commit as-is with the prior rolling cache available, exports the updated cache, and records that commit build only; warm follow-up runs are intentionally skipped.' || (inputs.strategy == 'boringcache' && 'Fresh lane: the cold build uses boringcache/one in mode=go to start the native Go GOCACHEPROG remote build cache, clears local GOCACHE for a fresh cold sample, and archives only GOMODCACHE via the run-scoped benchmark profile in .boringcache.toml. Warm restores that exact module cache on a fresh runner with trust-policy=restore and rebuilds the pinned source tree against the remote Go build cache populated by the cold build.' || 'Fresh lane: the cold build runs from scratch and saves both GOMODCACHE and GOCACHE to actions/cache under a run-scoped key. Warm restores those same local caches on a fresh runner and rebuilds the same pinned source tree without synthetic mutations.') }}" \
-            "${cache_summary_args[@]}"
-
-      - name: Upload benchmark artifacts
+      - name: Retain product evidence
+        if: inputs.strategy == 'boringcache'
         uses: actions/upload-artifact@v6
         with:
-          name: benchmark-${{ env.BENCHMARK_ID }}-${{ inputs.strategy }}-${{ env.CACHE_LANE }}
-          path: |
-            ${{ steps.artifact_files.outputs.json_path }}
-            ${{ steps.artifact_files.outputs.md_path }}
+          name: hugo-go-fresh-restore
+          path: ${{ steps.boringcache.outputs.evidence-path }}
           if-no-files-found: error
-
-      - name: Publish summary
-        run: cat "${{ steps.artifact_files.outputs.md_path }}" >> "$GITHUB_STEP_SUMMARY"
