@@ -1,20 +1,29 @@
 name: "Hugo Go Benchmark"
 run-name: >-
-  ${{ format('Benchmark {0} | {1}', github.event_name == 'pull_request' && 'Validation' || 'Rolling', github.event_name == 'push' && 'Upstream update' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
+  ${{ format('Benchmark {0} | {1}', github.event_name == 'pull_request' && 'Validation' || inputs.cli_version != '' && 'Canary' || 'Rolling', github.event_name == 'push' && 'Upstream update' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
+
 on:
   workflow_dispatch:
+    inputs:
+      cli_version:
+        description: "Optional exact BoringCache CLI release tag."
+        required: false
+        type: string
+        default: ""
+      runner_label:
+        description: "Optional runner label for a manual main-branch experiment."
+        required: false
+        type: string
+        default: ""
   push:
-    branches:
-      - main
-    paths:
-      - ".gitmodules"
-      - "upstream"
+    branches: [main]
+    paths: [".gitmodules", "upstream"]
   pull_request:
     paths:
       - ".gitmodules"
+      - ".github/actions/hugo-go-benchmark/**"
       - ".github/workflows/hugo-go-benchmark.yml"
       - ".github/workflows/hugo-go-fresh-benchmark.yml"
-      - ".github/workflows/reusable-go-benchmark.yml"
       - "README.md"
       - "scenarios/**"
       - "scripts/**"
@@ -24,23 +33,55 @@ permissions:
   contents: read
   actions: write
 
-jobs:
-  github-actions-cache:
-    name: GHA
-    uses: ./.github/workflows/reusable-go-benchmark.yml
-    with:
-      benchmark_id: hugo-go
-      strategy: actions-cache
-      cache_lane: ${{ github.event_name == 'pull_request' && 'fresh' || 'rolling' }}
-      go_version: "1.26.0"
-    secrets: inherit
+env:
+  BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+  BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+  BORINGCACHE_NO_GIT: "true"
 
-  boringcache:
-    name: BC
-    uses: ./.github/workflows/reusable-go-benchmark.yml
-    with:
-      benchmark_id: hugo-go
-      strategy: boringcache
-      cache_lane: ${{ github.event_name == 'pull_request' && 'fresh' || 'rolling' }}
-      go_version: "1.26.0"
-    secrets: inherit
+jobs:
+  publish:
+    name: ${{ matrix.provider }} Hugo Go ${{ github.event_name == 'pull_request' && 'cold' || 'commit' }}
+    if: inputs.runner_label == '' || github.ref_name == 'main'
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-latest' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: GitHub Actions
+            strategy: actions-cache
+          - provider: BoringCache
+            strategy: boringcache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/hugo-go-benchmark
+        with:
+          strategy: ${{ matrix.strategy }}
+          cache_lane: ${{ github.event_name == 'pull_request' && 'fresh' || 'rolling' }}
+          phase: publish
+          cli_version: ${{ inputs.cli_version }}
+          go_version: "1.26.0"
+
+  warm:
+    name: ${{ matrix.provider }} Hugo Go warm
+    needs: publish
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: GitHub Actions
+            strategy: actions-cache
+          - provider: BoringCache
+            strategy: boringcache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/hugo-go-benchmark
+        with:
+          strategy: ${{ matrix.strategy }}
+          cache_lane: fresh
+          phase: warm
+          cli_version: ${{ inputs.cli_version }}
+          go_version: "1.26.0"

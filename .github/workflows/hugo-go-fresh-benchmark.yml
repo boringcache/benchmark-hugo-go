@@ -6,7 +6,12 @@ on:
   workflow_dispatch:
     inputs:
       cli_version:
-        description: "Optional BoringCache CLI release tag for canary runs."
+        description: "Optional exact BoringCache CLI release tag."
+        required: false
+        type: string
+        default: ""
+      runner_label:
+        description: "Optional runner label for a manual main-branch experiment."
         required: false
         type: string
         default: ""
@@ -17,24 +22,54 @@ permissions:
   contents: read
   actions: write
 
-jobs:
-  github-actions-cache:
-    name: GHA
-    uses: ./.github/workflows/reusable-go-benchmark.yml
-    with:
-      benchmark_id: hugo-go
-      strategy: actions-cache
-      cache_lane: fresh
-      go_version: "1.26.0"
-    secrets: inherit
+env:
+  BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+  BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+  BORINGCACHE_NO_GIT: "true"
 
-  boringcache:
-    name: BC
-    uses: ./.github/workflows/reusable-go-benchmark.yml
-    with:
-      benchmark_id: hugo-go
-      strategy: boringcache
-      cache_lane: fresh
-      cli_version: ${{ inputs.cli_version }}
-      go_version: "1.26.0"
-    secrets: inherit
+jobs:
+  cold:
+    name: ${{ matrix.provider }} Hugo Go cold
+    if: inputs.runner_label == '' || github.ref_name == 'main'
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-latest' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: GitHub Actions
+            strategy: actions-cache
+          - provider: BoringCache
+            strategy: boringcache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/hugo-go-benchmark
+        with:
+          strategy: ${{ matrix.strategy }}
+          cache_lane: fresh
+          phase: publish
+          cli_version: ${{ inputs.cli_version }}
+          go_version: "1.26.0"
+
+  warm:
+    name: ${{ matrix.provider }} Hugo Go warm
+    needs: cold
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-latest' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: GitHub Actions
+            strategy: actions-cache
+          - provider: BoringCache
+            strategy: boringcache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/hugo-go-benchmark
+        with:
+          strategy: ${{ matrix.strategy }}
+          cache_lane: fresh
+          phase: warm
+          cli_version: ${{ inputs.cli_version }}
+          go_version: "1.26.0"

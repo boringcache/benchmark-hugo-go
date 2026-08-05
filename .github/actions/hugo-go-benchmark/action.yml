@@ -1,0 +1,139 @@
+name: "Run Hugo Go benchmark phase"
+description: "Runs one Hugo Go cache provider and phase."
+
+inputs:
+  strategy:
+    required: true
+  cache_lane:
+    required: true
+  phase:
+    required: true
+  cli_version:
+    required: false
+    default: ""
+  go_version:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout pinned Hugo source
+      shell: bash
+      run: |
+        git submodule sync --recursive
+        git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 4 upstream
+
+    - name: Prepare clean Hugo source
+      shell: bash
+      env:
+        PREPARE_PHASE: ${{ inputs.phase == 'warm' && 'warm1' || 'base' }}
+      run: ./scripts/prepare-source.sh "$PREPARE_PHASE"
+
+    - name: Select the cache cohort
+      id: scope
+      shell: bash
+      env:
+        CACHE_LANE: ${{ inputs.cache_lane }}
+      run: |
+        set -euo pipefail
+        ref_slug="$(printf '%s' "$GITHUB_REF_NAME" | tr -c 'A-Za-z0-9._-' '-')"
+        ref_slug="${ref_slug#-}"
+        ref_slug="${ref_slug%-}"
+        ref_slug="${ref_slug:-main}"
+        if [[ "$CACHE_LANE" == "rolling" ]]; then
+          cache_scope="hugo-go-rolling-${ref_slug}"
+        else
+          cache_scope="hugo-go-run-r${GITHUB_RUN_ID}-a${GITHUB_RUN_ATTEMPT}"
+        fi
+        ./scripts/scope-boringcache-run.sh "$cache_scope"
+        source_sha="$(git rev-parse HEAD:upstream)"
+        echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
+        echo "cache_key=go-${cache_scope}-${source_sha}" >> "$GITHUB_OUTPUT"
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go_version }}
+        cache: false
+
+    - name: Restore the GitHub Actions cache
+      if: inputs.strategy == 'actions-cache' && inputs.phase == 'publish'
+      uses: actions/cache@v5
+      with:
+        path: ${{ github.workspace }}/.go/build-cache
+        key: ${{ steps.scope.outputs.cache_key }}
+        restore-keys: |
+          go-${{ steps.scope.outputs.cache_scope }}-
+
+    - name: Restore the exact GitHub Actions cache
+      if: inputs.strategy == 'actions-cache' && inputs.phase == 'warm'
+      uses: actions/cache/restore@v5
+      with:
+        path: ${{ github.workspace }}/.go/build-cache
+        key: ${{ steps.scope.outputs.cache_key }}
+        fail-on-cache-miss: true
+
+    - name: Publish with BoringCache
+      id: boringcache-publish
+      if: inputs.strategy == 'boringcache' && inputs.phase == 'publish'
+      uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
+      with:
+        cli-version: ${{ inputs.cli_version }}
+        setup: none
+        mode: go
+        trust-policy: publish
+        working-directory: upstream
+        fail-on-cache-error: true
+        metadata-hints: phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'fresh-cold' }}
+      env:
+        GOCACHE: ${{ github.workspace }}/.go/build-cache
+
+    - name: Restore with BoringCache
+      id: boringcache-restore
+      if: inputs.strategy == 'boringcache' && inputs.phase == 'warm'
+      uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
+      with:
+        cli-version: ${{ inputs.cli_version }}
+        setup: none
+        mode: go
+        trust-policy: restore
+        working-directory: upstream
+        fail-on-cache-miss: true
+        fail-on-cache-error: true
+        metadata-hints: phase=fresh-warm
+      env:
+        GOCACHE: ${{ github.workspace }}/.go/build-cache
+
+    - name: Build Hugo
+      shell: bash
+      env:
+        GOCACHE: ${{ github.workspace }}/.go/build-cache
+      run: |
+        set -euo pipefail
+        mkdir -p benchmark-bin "$GOCACHE"
+        cd upstream
+        go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
+
+    - name: Verify the Hugo build
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -x benchmark-bin/hugo
+        ./benchmark-bin/hugo version
+        test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
+
+    - name: Retain publish evidence
+      if: inputs.strategy == 'boringcache' && inputs.phase == 'publish'
+      uses: actions/upload-artifact@v6
+      with:
+        name: hugo-go-${{ inputs.cache_lane }}-publish
+        path: ${{ steps.boringcache-publish.outputs.evidence-path }}
+        if-no-files-found: error
+
+    - name: Retain warm evidence
+      if: inputs.strategy == 'boringcache' && inputs.phase == 'warm'
+      uses: actions/upload-artifact@v6
+      with:
+        name: hugo-go-fresh-restore
+        path: ${{ steps.boringcache-restore.outputs.evidence-path }}
+        if-no-files-found: error
