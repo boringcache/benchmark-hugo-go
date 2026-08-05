@@ -98,18 +98,7 @@ jobs:
           restore-keys: |
             go-${{ steps.scope.outputs.cache_scope }}-
 
-      - name: Build Hugo with the GitHub Actions cache
-        if: inputs.strategy == 'actions-cache'
-        env:
-          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
-          GOCACHE: ${{ env.GO_BUILD_CACHE }}
-        run: |
-          set -euo pipefail
-          mkdir -p benchmark-bin "$GOMODCACHE" "$GOCACHE"
-          cd upstream
-          go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
-
-      - name: Build Hugo through BoringCache One
+      - name: Configure BoringCache One for the Hugo build
         if: inputs.strategy == 'boringcache'
         id: boringcache
         uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
@@ -128,6 +117,16 @@ jobs:
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
           BORINGCACHE_NO_GIT: "true"
+
+      - name: Build Hugo
+        env:
+          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
+          GOCACHE: ${{ env.GO_BUILD_CACHE }}
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-bin "$GOMODCACHE" "$GOCACHE"
+          cd upstream
+          go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
 
       - name: Verify the Hugo build
         run: |
@@ -184,18 +183,7 @@ jobs:
           key: ${{ needs.publish.outputs.cache_key }}
           fail-on-cache-miss: true
 
-      - name: Build Hugo with the restored GitHub Actions cache
-        if: inputs.strategy == 'actions-cache'
-        env:
-          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
-          GOCACHE: ${{ env.GO_BUILD_CACHE }}
-        run: |
-          set -euo pipefail
-          mkdir -p benchmark-bin "$GOMODCACHE" "$GOCACHE"
-          cd upstream
-          go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
-
-      - name: Restore and build Hugo through BoringCache One
+      - name: Configure BoringCache One from the published cohort
         if: inputs.strategy == 'boringcache'
         id: boringcache
         uses: boringcache/one@09e053620cda4d3472f26a3ddd181144a108e2c2 # v1.16.8
@@ -214,6 +202,16 @@ jobs:
           GOCACHE: ${{ env.GO_BUILD_CACHE }}
           BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
           BORINGCACHE_NO_GIT: "true"
+
+      - name: Build Hugo
+        env:
+          GOMODCACHE: ${{ env.GO_MODULE_CACHE }}
+          GOCACHE: ${{ env.GO_BUILD_CACHE }}
+        run: |
+          set -euo pipefail
+          mkdir -p benchmark-bin "$GOMODCACHE" "$GOCACHE"
+          cd upstream
+          go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
 
       - name: Verify the restored Hugo build
         run: |
