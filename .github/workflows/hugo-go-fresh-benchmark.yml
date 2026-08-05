@@ -1,6 +1,6 @@
 name: "Hugo Go Fresh"
 run-name: >-
-  ${{ format('Benchmark {0} | {1}', inputs.cli_version != '' && 'Canary' || 'Fresh', github.event_name == 'schedule' && 'Weekly' || format('Manual dispatch ({0})', github.ref_name)) }}
+  ${{ format('Benchmark {0} | {1}', github.event_name == 'pull_request' && 'Validation' || inputs.cli_version != '' && 'Canary' || 'Fresh', github.event_name == 'schedule' && 'Weekly' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
 
 on:
   workflow_dispatch:
@@ -17,6 +17,16 @@ on:
         default: ""
   schedule:
     - cron: "0 4 * * 1"
+  pull_request:
+    paths:
+      - ".gitmodules"
+      - ".github/actions/hugo-go-benchmark/**"
+      - ".github/workflows/hugo-go-benchmark.yml"
+      - ".github/workflows/hugo-go-fresh-benchmark.yml"
+      - "README.md"
+      - "scenarios/**"
+      - "scripts/**"
+      - "upstream"
 
 permissions:
   contents: read

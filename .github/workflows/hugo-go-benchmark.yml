@@ -1,6 +1,6 @@
 name: "Hugo Go Benchmark"
 run-name: >-
-  ${{ format('Benchmark {0} | {1}', github.event_name == 'pull_request' && 'Validation' || inputs.cli_version != '' && 'Canary' || 'Rolling', github.event_name == 'push' && 'Upstream update' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
+  ${{ format('Benchmark {0} | {1}', inputs.cli_version != '' && 'Canary' || 'Rolling', github.event_name == 'push' && 'Upstream update' || format('Manual dispatch ({0})', github.ref_name)) }}
 
 on:
   workflow_dispatch:
@@ -18,16 +18,6 @@ on:
   push:
     branches: [main]
     paths: [".gitmodules", "upstream"]
-  pull_request:
-    paths:
-      - ".gitmodules"
-      - ".github/actions/hugo-go-benchmark/**"
-      - ".github/workflows/hugo-go-benchmark.yml"
-      - ".github/workflows/hugo-go-fresh-benchmark.yml"
-      - "README.md"
-      - "scenarios/**"
-      - "scripts/**"
-      - "upstream"
 
 permissions:
   contents: read
@@ -40,7 +30,7 @@ env:
 
 jobs:
   publish:
-    name: ${{ matrix.provider }} Hugo Go ${{ github.event_name == 'pull_request' && 'cold' || 'commit' }}
+    name: ${{ matrix.provider }} Hugo Go commit
     if: inputs.runner_label == '' || github.ref_name == 'main'
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-latest' }}
     timeout-minutes: 120
@@ -57,31 +47,7 @@ jobs:
       - uses: ./.github/actions/hugo-go-benchmark
         with:
           strategy: ${{ matrix.strategy }}
-          cache_lane: ${{ github.event_name == 'pull_request' && 'fresh' || 'rolling' }}
+          cache_lane: rolling
           phase: publish
-          cli_version: ${{ inputs.cli_version }}
-          go_version: "1.26.0"
-
-  warm:
-    name: ${{ matrix.provider }} Hugo Go warm
-    needs: publish
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - provider: GitHub Actions
-            strategy: actions-cache
-          - provider: BoringCache
-            strategy: boringcache
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/hugo-go-benchmark
-        with:
-          strategy: ${{ matrix.strategy }}
-          cache_lane: fresh
-          phase: warm
           cli_version: ${{ inputs.cli_version }}
           go_version: "1.26.0"
