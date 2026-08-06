@@ -19,6 +19,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Start the workflow timer
+      id: workflow_timer
+      shell: bash
+      run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
     - name: Checkout pinned Hugo source
       shell: bash
       run: |
@@ -166,6 +170,7 @@ runs:
         STRATEGY: ${{ inputs.strategy }}
         CACHE_LANE: ${{ inputs.cache_lane }}
         REPORT_PHASE: ${{ inputs.cache_lane == 'rolling' && 'commit' || inputs.phase == 'warm' && 'warm' || 'cold' }}
+        WORKFLOW_STARTED_AT: ${{ steps.workflow_timer.outputs.started_at }}
         SETUP_SECONDS: ${{ steps.build_timer.outputs.setup_seconds }}
         BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
         CACHE_HIT: ${{ steps.boringcache-publish.outputs.cache-hit || steps.boringcache-restore.outputs.cache-hit }}
@@ -184,6 +189,7 @@ runs:
           --phase "$REPORT_PHASE" \
           --mode go \
           --restore-or-setup-seconds "$SETUP_SECONDS" \
+          --workflow-seconds "$(( $(date +%s) - WORKFLOW_STARTED_AT ))" \
           --build-seconds "$BUILD_SECONDS" \
           --cache-hit "$CACHE_HIT" \
           --cache-import-ready "$CACHE_IMPORT_READY" \
