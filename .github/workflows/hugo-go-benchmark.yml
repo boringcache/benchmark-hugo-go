@@ -49,5 +49,6 @@ jobs:
           strategy: ${{ matrix.strategy }}
           cache_lane: rolling
           phase: publish
+          benchmark_id: hugo-go
           cli_version: ${{ inputs.cli_version }}
           go_version: "1.26.0"

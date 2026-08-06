@@ -8,6 +8,8 @@ inputs:
     required: true
   phase:
     required: true
+  benchmark_id:
+    required: true
   cli_version:
     required: false
     default: ""
@@ -84,7 +86,7 @@ runs:
         trust-policy: publish
         working-directory: upstream
         fail-on-cache-error: true
-        metadata-hints: phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'fresh-cold' }}
+        metadata-hints: benchmark=${{ inputs.benchmark_id }},phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'fresh-cold' }}
       env:
         GOCACHE: ${{ github.workspace }}/.go/build-cache
 
@@ -100,7 +102,7 @@ runs:
         working-directory: upstream
         fail-on-cache-miss: true
         fail-on-cache-error: true
-        metadata-hints: phase=fresh-warm
+        metadata-hints: benchmark=${{ inputs.benchmark_id }},phase=fresh-warm
       env:
         GOCACHE: ${{ github.workspace }}/.go/build-cache
 
@@ -126,7 +128,7 @@ runs:
       if: inputs.strategy == 'boringcache' && inputs.phase == 'publish'
       uses: actions/upload-artifact@v6
       with:
-        name: hugo-go-${{ inputs.cache_lane }}-publish
+        name: ${{ inputs.benchmark_id }}-${{ inputs.cache_lane }}-publish
         path: ${{ steps.boringcache-publish.outputs.evidence-path }}
         if-no-files-found: error
 
@@ -134,6 +136,6 @@ runs:
       if: inputs.strategy == 'boringcache' && inputs.phase == 'warm'
       uses: actions/upload-artifact@v6
       with:
-        name: hugo-go-fresh-restore
+        name: ${{ inputs.benchmark_id }}-fresh-restore
         path: ${{ steps.boringcache-restore.outputs.evidence-path }}
         if-no-files-found: error
