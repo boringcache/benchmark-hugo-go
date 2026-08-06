@@ -58,6 +58,10 @@ runs:
         go-version: ${{ inputs.go_version }}
         cache: false
 
+    - name: Start the provider setup timer
+      id: setup_timer
+      shell: bash
+      run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
     - name: Restore the GitHub Actions cache
       if: inputs.strategy == 'actions-cache' && inputs.phase == 'publish'
       uses: actions/cache@v5
@@ -106,6 +110,16 @@ runs:
       env:
         GOCACHE: ${{ github.workspace }}/.go/build-cache
 
+    - name: Start the build timer
+      id: build_timer
+      shell: bash
+      env:
+        SETUP_STARTED_AT: ${{ steps.setup_timer.outputs.started_at }}
+      run: |
+        set -euo pipefail
+        now="$(date +%s)"
+        echo "setup_seconds=$(( now - SETUP_STARTED_AT ))" >> "$GITHUB_OUTPUT"
+        echo "started_at=${now}" >> "$GITHUB_OUTPUT"
     - name: Build Hugo
       shell: bash
       env:
@@ -116,6 +130,12 @@ runs:
         cd upstream
         go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
 
+    - name: Capture the build timing
+      id: build_timing
+      shell: bash
+      env:
+        BUILD_STARTED_AT: ${{ steps.build_timer.outputs.started_at }}
+      run: echo "build_seconds=$(( $(date +%s) - BUILD_STARTED_AT ))" >> "$GITHUB_OUTPUT"
     - name: Verify the Hugo build
       shell: bash
       run: |
@@ -138,4 +158,43 @@ runs:
       with:
         name: ${{ inputs.benchmark_id }}-fresh-restore
         path: ${{ steps.boringcache-restore.outputs.evidence-path }}
+        if-no-files-found: error
+    - name: Write the benchmark phase evidence
+      shell: bash
+      env:
+        BENCHMARK_ID: ${{ inputs.benchmark_id }}
+        STRATEGY: ${{ inputs.strategy }}
+        CACHE_LANE: ${{ inputs.cache_lane }}
+        REPORT_PHASE: ${{ inputs.cache_lane == 'rolling' && 'commit' || inputs.phase == 'warm' && 'warm' || 'cold' }}
+        SETUP_SECONDS: ${{ steps.build_timer.outputs.setup_seconds }}
+        BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
+        CACHE_HIT: ${{ steps.boringcache-publish.outputs.cache-hit || steps.boringcache-restore.outputs.cache-hit }}
+        CACHE_IMPORT_READY: ${{ steps.boringcache-publish.outputs.docker-cache-import-ready || steps.boringcache-restore.outputs.docker-cache-import-ready }}
+        CACHE_TAG: ${{ steps.boringcache-publish.outputs.cache-tag || steps.boringcache-restore.outputs.cache-tag }}
+        CACHE_WORKSPACE: ${{ steps.boringcache-publish.outputs.workspace || steps.boringcache-restore.outputs.workspace }}
+        EVIDENCE_PATH: ${{ steps.boringcache-publish.outputs.evidence-path || steps.boringcache-restore.outputs.evidence-path }}
+        SOURCE_REPOSITORY: ${{ steps.scope.outputs.source_repository }}
+        SOURCE_SHA: ${{ steps.scope.outputs.source_sha }}
+      run: |
+        set -euo pipefail
+        python3 ./scripts/benchmark-report.py phase \
+          --benchmark "$BENCHMARK_ID" \
+          --strategy "$STRATEGY" \
+          --lane "$CACHE_LANE" \
+          --phase "$REPORT_PHASE" \
+          --mode go \
+          --restore-or-setup-seconds "$SETUP_SECONDS" \
+          --build-seconds "$BUILD_SECONDS" \
+          --cache-hit "$CACHE_HIT" \
+          --cache-import-ready "$CACHE_IMPORT_READY" \
+          --cache-tag "$CACHE_TAG" \
+          --workspace "$CACHE_WORKSPACE" \
+          --source-repository "$SOURCE_REPOSITORY" \
+          --source-sha "$SOURCE_SHA" \
+          --evidence "$EVIDENCE_PATH"
+    - name: Retain the benchmark phase evidence
+      uses: actions/upload-artifact@v6
+      with:
+        name: phase-${{ inputs.benchmark_id }}-${{ inputs.strategy }}-${{ inputs.cache_lane }}-${{ inputs.cache_lane == 'rolling' && 'commit' || inputs.phase == 'warm' && 'warm' || 'cold' }}
+        path: benchmark-results/
         if-no-files-found: error

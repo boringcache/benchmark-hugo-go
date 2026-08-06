@@ -36,6 +36,7 @@ env:
   BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
   BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
   BORINGCACHE_NO_GIT: "true"
+  BENCHMARK_ID: hugo-go
 
 jobs:
   cold:
@@ -85,3 +86,34 @@ jobs:
           benchmark_id: hugo-go
           cli_version: ${{ inputs.cli_version }}
           go_version: "1.26.0"
+  report:
+    name: Hugo Go fresh report
+    needs: warm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download the benchmark phase evidence
+        uses: actions/download-artifact@v6
+        with:
+          pattern: phase-${{ env.BENCHMARK_ID }}-*
+          path: phase-evidence
+      - name: Publish the Hugo Go benchmark report
+        run: |
+          python3 ./scripts/benchmark-report.py summarize \
+            --benchmark "$BENCHMARK_ID" \
+            --title "Hugo Go fresh benchmark" \
+            --input-dir phase-evidence \
+            --output-dir benchmark-results
+      - name: Retain the BoringCache fresh result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-boringcache-fresh
+          path: benchmark-results/${{ env.BENCHMARK_ID }}-boringcache-fresh.json
+          if-no-files-found: error
+      - name: Retain the GitHub Actions fresh result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-actions-cache-fresh
+          path: benchmark-results/${{ env.BENCHMARK_ID }}-actions-cache-fresh.json
+          if-no-files-found: error
