@@ -68,7 +68,6 @@ jobs:
       - name: Publish the Hugo Go benchmark report
         run: |
           python3 ./scripts/benchmark-report.py summarize \
-            --benchmark "$BENCHMARK_ID" \
             --title "Hugo Go rolling benchmark" \
             --input-dir phase-evidence \
             --output-dir benchmark-results
