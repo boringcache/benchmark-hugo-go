@@ -28,6 +28,9 @@ runs:
       run: |
         git submodule sync --recursive
         git -c protocol.version=2 submodule update --init --depth 1 --recommend-shallow --jobs 4 upstream
+    - name: Verify the upstream benchmark recipe
+      shell: bash
+      run: python3 ./scripts/verify-upstream-recipe.py
 
     - name: Prepare clean Hugo source
       shell: bash
@@ -128,11 +131,7 @@ runs:
       shell: bash
       env:
         GOCACHE: ${{ github.workspace }}/.go/build-cache
-      run: |
-        set -euo pipefail
-        mkdir -p benchmark-bin "$GOCACHE"
-        cd upstream
-        go build -trimpath -buildvcs=false -o ../benchmark-bin/hugo .
+      run: python3 ./scripts/run-benchmark-plan.py go --working-directory upstream
 
     - name: Capture the build timing
       id: build_timing
@@ -144,8 +143,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        test -x benchmark-bin/hugo
-        ./benchmark-bin/hugo version
+        artifact="$(go env GOPATH)/bin/dragonfly_amd64/hugo"
+        test -x "$artifact"
         test -z "$(git -C upstream status --porcelain=v1 --untracked-files=all)"
 
     - name: Retain publish evidence

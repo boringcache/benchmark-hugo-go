@@ -4,4 +4,5 @@ workspace = "boringcache/benchmark-hugo-go"
 tag = "hugo-go-local"
 no-platform = true
 no-git = true
-command = ["go", "build", "-trimpath", "-buildvcs=false", "-o", "../benchmark-bin/hugo", "."]
+metadata-hints = ["benchmark=hugo-go", "upstream-step=build-for-dragonfly"]
+command = ["env", "GOARCH=amd64", "GOOS=dragonfly", "go", "install"]
