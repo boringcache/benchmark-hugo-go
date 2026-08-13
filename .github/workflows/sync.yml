@@ -23,14 +23,13 @@ jobs:
         with:
           fetch-depth: 0
           submodules: false
-          token: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN || github.token }}
+          token: ${{ github.token }}
 
       - name: Sync upstream submodule
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HAS_BOT_TOKEN: ${{ secrets.BOT_PUBLIC_GITHUB_TOKEN != '' }}
+        id: sync
         run: |
           set -euo pipefail
+          echo "updated=false" >> "$GITHUB_OUTPUT"
           git config --global user.name "boringcache-bot"
           git config --global user.email "boringcache-bot@users.noreply.github.com"
 
@@ -60,7 +59,10 @@ jobs:
           git add upstream
           git commit -m "Update upstream to ${upstream_repo}@${commit_sha}"
           git push origin HEAD:main
+          echo "updated=true" >> "$GITHUB_OUTPUT"
 
-          if [[ "${HAS_BOT_TOKEN}" != "true" ]]; then
-            gh workflow run "hugo-go-benchmark.yml" --repo "$GITHUB_REPOSITORY" --ref main -f cache_lane=rolling
-          fi
+      - name: Dispatch rolling benchmark
+        if: steps.sync.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run hugo-go-benchmark.yml --repo "$GITHUB_REPOSITORY" --ref main
