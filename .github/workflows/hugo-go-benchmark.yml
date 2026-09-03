@@ -52,7 +52,7 @@ jobs:
           phase: publish
           benchmark_id: hugo-go
           cli_version: ${{ inputs.cli_version }}
-          go_version: "1.26.0"
+          go_version: "1.27.0"
   report:
     name: Hugo Go rolling report
     needs: publish
