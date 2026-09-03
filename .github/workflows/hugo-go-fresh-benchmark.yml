@@ -1,0 +1,118 @@
+name: "Hugo Go Fresh"
+run-name: >-
+  ${{ format('Benchmark {0} | {1}', github.event_name == 'pull_request' && 'Validation' || inputs.cli_version != '' && 'Canary' || 'Fresh', github.event_name == 'schedule' && 'Weekly' || github.event_name == 'pull_request' && format('PR #{0}', github.event.pull_request.number) || format('Manual dispatch ({0})', github.ref_name)) }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: "Optional exact BoringCache CLI release tag."
+        required: false
+        type: string
+        default: ""
+      runner_label:
+        description: "Optional runner label for a manual main-branch experiment."
+        required: false
+        type: string
+        default: ""
+  schedule:
+    - cron: "0 4 * * 1"
+  pull_request:
+    paths:
+      - ".gitmodules"
+      - ".github/actions/hugo-go-benchmark/**"
+      - ".github/workflows/hugo-go-benchmark.yml"
+      - ".github/workflows/hugo-go-fresh-benchmark.yml"
+      - "README.md"
+      - "scenarios/**"
+      - "scripts/**"
+      - "upstream"
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
+  BORINGCACHE_SAVE_TOKEN: ${{ secrets.BORINGCACHE_SAVE_TOKEN }}
+  BORINGCACHE_NO_GIT: "true"
+  BENCHMARK_ID: hugo-go
+
+jobs:
+  cold:
+    name: ${{ matrix.provider }} Hugo Go cold
+    if: inputs.runner_label == '' || github.ref_name == 'main'
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-latest' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: GitHub Actions
+            strategy: actions-cache
+          - provider: BoringCache
+            strategy: boringcache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/hugo-go-benchmark
+        with:
+          strategy: ${{ matrix.strategy }}
+          cache_lane: fresh
+          phase: publish
+          benchmark_id: hugo-go
+          cli_version: ${{ inputs.cli_version }}
+          go_version: "1.26.0"
+
+  warm:
+    name: ${{ matrix.provider }} Hugo Go warm
+    needs: cold
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref_name == 'main' && inputs.runner_label || 'ubuntu-latest' }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - provider: GitHub Actions
+            strategy: actions-cache
+          - provider: BoringCache
+            strategy: boringcache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/hugo-go-benchmark
+        with:
+          strategy: ${{ matrix.strategy }}
+          cache_lane: fresh
+          phase: warm
+          benchmark_id: hugo-go
+          cli_version: ${{ inputs.cli_version }}
+          go_version: "1.26.0"
+  report:
+    name: Hugo Go fresh report
+    needs: warm
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download the benchmark phase evidence
+        uses: actions/download-artifact@v6
+        with:
+          pattern: phase-${{ env.BENCHMARK_ID }}-*
+          path: phase-evidence
+      - name: Publish the Hugo Go benchmark report
+        run: |
+          python3 ./scripts/benchmark-report.py summarize \
+            --title "Hugo Go fresh benchmark" \
+            --input-dir phase-evidence \
+            --output-dir benchmark-results
+      - name: Retain the BoringCache fresh result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-boringcache-fresh
+          path: benchmark-results/${{ env.BENCHMARK_ID }}-boringcache-fresh.json
+          if-no-files-found: error
+      - name: Retain the GitHub Actions fresh result
+        uses: actions/upload-artifact@v6
+        with:
+          name: benchmark-${{ env.BENCHMARK_ID }}-actions-cache-fresh
+          path: benchmark-results/${{ env.BENCHMARK_ID }}-actions-cache-fresh.json
+          if-no-files-found: error

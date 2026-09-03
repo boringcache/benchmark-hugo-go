@@ -1,0 +1,8 @@
+workspace = "boringcache/benchmark-hugo-go"
+
+[adapters.go]
+tag = "hugo-go-local"
+no-platform = true
+no-git = true
+metadata-hints = ["benchmark=hugo-go", "upstream-step=build-for-dragonfly"]
+command = ["env", "GOARCH=amd64", "GOOS=dragonfly", "go", "install"]
