@@ -92,12 +92,10 @@ runs:
       uses: boringcache/one@20202f4c4b789cdee581ae3f117dfafb8293b19c # v1 / 1.20.0
       with:
         cli-version: ${{ inputs.cli_version }}
-        setup: none
         mode: go
         trust-policy: publish
         working-directory: upstream
         fail-on-cache-error: true
-        metadata-hints: benchmark=${{ inputs.benchmark_id }},phase=${{ inputs.cache_lane == 'rolling' && 'rolling' || 'fresh-cold' }}
       env:
         GOCACHE: ${{ github.workspace }}/.go/build-cache
 
@@ -107,13 +105,11 @@ runs:
       uses: boringcache/one@20202f4c4b789cdee581ae3f117dfafb8293b19c # v1 / 1.20.0
       with:
         cli-version: ${{ inputs.cli_version }}
-        setup: none
         mode: go
         trust-policy: restore
         working-directory: upstream
         fail-on-cache-miss: true
         fail-on-cache-error: true
-        metadata-hints: benchmark=${{ inputs.benchmark_id }},phase=fresh-warm
       env:
         GOCACHE: ${{ github.workspace }}/.go/build-cache
 
@@ -173,9 +169,6 @@ runs:
         SETUP_SECONDS: ${{ steps.build_timer.outputs.setup_seconds }}
         BUILD_SECONDS: ${{ steps.build_timing.outputs.build_seconds }}
         CACHE_HIT: ${{ steps.boringcache-publish.outputs.cache-hit || steps.boringcache-restore.outputs.cache-hit }}
-        CACHE_IMPORT_READY: ${{ steps.boringcache-publish.outputs.docker-cache-import-ready || steps.boringcache-restore.outputs.docker-cache-import-ready }}
-        CACHE_TAG: ${{ steps.boringcache-publish.outputs.cache-tag || steps.boringcache-restore.outputs.cache-tag }}
-        CACHE_WORKSPACE: ${{ steps.boringcache-publish.outputs.workspace || steps.boringcache-restore.outputs.workspace }}
         EVIDENCE_PATH: ${{ steps.boringcache-publish.outputs.evidence-path || steps.boringcache-restore.outputs.evidence-path }}
         SOURCE_REPOSITORY: ${{ steps.scope.outputs.source_repository }}
         SOURCE_SHA: ${{ steps.scope.outputs.source_sha }}
@@ -191,9 +184,6 @@ runs:
           --workflow-seconds "$(( $(date +%s) - WORKFLOW_STARTED_AT ))" \
           --build-seconds "$BUILD_SECONDS" \
           --cache-hit "$CACHE_HIT" \
-          --cache-import-ready "$CACHE_IMPORT_READY" \
-          --cache-tag "$CACHE_TAG" \
-          --workspace "$CACHE_WORKSPACE" \
           --source-repository "$SOURCE_REPOSITORY" \
           --source-sha "$SOURCE_SHA" \
           --evidence "$EVIDENCE_PATH"
