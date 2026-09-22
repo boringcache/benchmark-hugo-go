@@ -171,7 +171,6 @@ runs:
         CACHE_HIT: ${{ steps.boringcache-publish.outputs.cache-hit || steps.boringcache-restore.outputs.cache-hit }}
         EVIDENCE_PATH: ${{ steps.boringcache-publish.outputs.evidence-path || steps.boringcache-restore.outputs.evidence-path }}
         STORAGE_KEY: ${{ steps.scope.outputs.cache_key }}
-        BORINGCACHE_RESTORE_TOKEN: ${{ secrets.BORINGCACHE_RESTORE_TOKEN }}
         GITHUB_TOKEN: ${{ github.token }}
         SOURCE_REPOSITORY: ${{ steps.scope.outputs.source_repository }}
         SOURCE_SHA: ${{ steps.scope.outputs.source_sha }}
