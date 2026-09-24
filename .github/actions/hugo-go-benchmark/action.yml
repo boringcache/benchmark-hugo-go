@@ -58,6 +58,8 @@ runs:
         source_sha="$(git rev-parse HEAD:upstream)"
         echo "cache_scope=${cache_scope}" >> "$GITHUB_OUTPUT"
         echo "cache_key=go-${cache_scope}-${source_sha}" >> "$GITHUB_OUTPUT"
+        echo "source_repository=gohugoio/hugo" >> "$GITHUB_OUTPUT"
+        echo "source_sha=${source_sha}" >> "$GITHUB_OUTPUT"
 
     - name: Set up Go
       uses: actions/setup-go@v6
